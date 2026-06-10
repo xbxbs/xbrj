@@ -314,153 +314,169 @@ fun DiaryListScreen(
         },
         containerColor = androidx.compose.ui.graphics.Color.Transparent
     ) { paddingValues ->
-        Column(
+        // 真正丝滑版：过滤区、已选筛选条和日记卡片全部放进同一个 LazyColumn。
+        // 这样过滤区高度变化时，卡片作为列表 item 自然重排，不再由外层 Column 整体顶动 LazyColumn。
+        LazyColumn(
+            state = listState,
             modifier = Modifier
                 .fillMaxSize()
-                .padding(paddingValues)
+                .padding(paddingValues),
+            contentPadding = PaddingValues(vertical = Spacing.S)
         ) {
-            // Unified Filter Panel
-            AnimatedVisibility(
-                visible = showSearchBar || showMoodFilter || showGroupFilter,
-                enter = fadeIn(
-                    animationSpec = spring(
-                        dampingRatio = filterPanelEnterDamping,
-                        stiffness = filterPanelEnterStiffness
+            item(key = "filter_panel", contentType = "filter_panel") {
+                AnimatedVisibility(
+                    modifier = Modifier.animateItemPlacement(
+                        animationSpec = MotionSpec.offsetSoft()
+                    ),
+                    visible = showSearchBar || showMoodFilter || showGroupFilter,
+                    enter = fadeIn(
+                        animationSpec = spring(
+                            dampingRatio = filterPanelEnterDamping,
+                            stiffness = filterPanelEnterStiffness
+                        )
+                    ) + expandVertically(
+                        expandFrom = Alignment.Top,
+                        animationSpec = spring(
+                            dampingRatio = filterPanelEnterDamping,
+                            stiffness = filterPanelEnterStiffness
+                        )
+                    ),
+                    exit = fadeOut(
+                        animationSpec = tween(durationMillis = filterPanelExitDuration, easing = MotionEasing.Exit)
+                    ) + shrinkVertically(
+                        shrinkTowards = Alignment.Top,
+                        animationSpec = tween(durationMillis = filterPanelExitDuration, easing = MotionEasing.Exit)
                     )
-                ) + expandVertically(
-                    expandFrom = Alignment.Top,
-                    animationSpec = spring(
-                        dampingRatio = filterPanelEnterDamping,
-                        stiffness = filterPanelEnterStiffness
-                    )
-                ),
-                exit = fadeOut(
-                    animationSpec = tween(durationMillis = filterPanelExitDuration, easing = MotionEasing.Exit)
-                ) + shrinkVertically(
-                    shrinkTowards = Alignment.Top,
-                    animationSpec = tween(durationMillis = filterPanelExitDuration, easing = MotionEasing.Exit)
-                )
-            ) {
-                FilterPanel(
-                    showSearch = showSearchBar,
-                    showMood = showMoodFilter,
-                    showGroup = showGroupFilter,
-                    query = searchQuery,
-                    selectedMood = selectedMood,
-                    selectedGroup = selectedGroup,
-                    usedGroups = viewModel.getUsedGroups(),
-                    onQueryChange = { viewModel.setSearchQuery(it) },
-                    onClearQuery = { viewModel.setSearchQuery("") },
-                    onMoodSelected = { viewModel.setSelectedMood(it) },
-                    onGroupSelected = { viewModel.setSelectedGroup(it) },
-                    searchHistory = searchHistory,
-                    onRemoveHistory = { viewModel.removeSearchHistory(it) },
-                    animationSpeed = animationSpeed
-                )
-            }
-            
-            // Active Filters Indicator
-            AnimatedVisibility(
-                visible = (searchQuery.isNotBlank() || selectedMood != null || selectedGroup != null) && !showSearchBar && !showMoodFilter && !showGroupFilter,
-                enter = fadeIn(
-                    animationSpec = spring(
-                        dampingRatio = Spring.DampingRatioNoBouncy,
-                        stiffness = Spring.StiffnessMedium
-                    )
-                ) + expandVertically(
-                    expandFrom = Alignment.Top,
-                    animationSpec = spring(
-                        dampingRatio = Spring.DampingRatioNoBouncy,
-                        stiffness = Spring.StiffnessMedium
-                    )
-                ),
-                exit = fadeOut(
-                    animationSpec = tween(durationMillis = 150, easing = FastOutLinearInEasing)
-                ) + shrinkVertically(
-                    shrinkTowards = Alignment.Top,
-                    animationSpec = tween(durationMillis = 150, easing = FastOutLinearInEasing)
-                )
-            ) {
-                FilterChipRow(
-                    searchQuery = searchQuery,
-                    selectedMood = selectedMood,
-                    selectedGroup = selectedGroup,
-                    showFavoritesOnly = false,
-                    onClearFilters = { viewModel.clearFilters() }
-                )
-            }
-            
-            // Entry List
-            if (entries.isEmpty()) {
-                EmptyState(
-                    hasFilters = searchQuery.isNotBlank() || selectedMood != null || showFavoritesOnly,
-                    onCreateFirst = { onNavigateToEdit(null) }
-                )
-            } else {
-                LazyColumn(
-                    state = listState,
-                    modifier = Modifier.fillMaxSize(),
-                    contentPadding = PaddingValues(vertical = Spacing.S)
                 ) {
-                    itemsIndexed(
-                        items = entries,
-                        key = { _, entry -> entry.id }
-                    ) { index, entry ->
-                        // Google Keep 风格入场动画：scale + fade
-                        var isVisible by remember(entry.id, entries.size) { 
-                            mutableStateOf(false) 
-                        }
-                        
-                        LaunchedEffect(entry.id, entries.size) {
-                            delay((index.coerceAtMost(8) * 24L) + 32L)
-                            isVisible = true
-                        }
-                        
-                        // 根据用户设置动态调整动画参数
-                        val (damping, stiffness) = when (animationSpeed) {
-                            ThemePreferences.AnimationSpeed.ELEGANT -> 0.75f to 280f
-                            ThemePreferences.AnimationSpeed.STANDARD -> 0.68f to 380f
-                            ThemePreferences.AnimationSpeed.SWIFT -> 0.85f to 520f
-                        }
-                        
-                        // scale 动画（0.92 → 1.0，参考 Google Keep）
-                        val scale by animateFloatAsState(
-                            targetValue = if (isVisible) 1f else 0.92f,
-                            animationSpec = spring(
-                                dampingRatio = damping,
-                                stiffness = stiffness
-                            ),
-                            label = "card_scale"
+                    FilterPanel(
+                        showSearch = showSearchBar,
+                        showMood = showMoodFilter,
+                        showGroup = showGroupFilter,
+                        query = searchQuery,
+                        selectedMood = selectedMood,
+                        selectedGroup = selectedGroup,
+                        usedGroups = viewModel.getUsedGroups(),
+                        onQueryChange = { viewModel.setSearchQuery(it) },
+                        onClearQuery = { viewModel.setSearchQuery("") },
+                        onMoodSelected = { viewModel.setSelectedMood(it) },
+                        onGroupSelected = { viewModel.setSelectedGroup(it) },
+                        searchHistory = searchHistory,
+                        onRemoveHistory = { viewModel.removeSearchHistory(it) },
+                        animationSpeed = animationSpeed
+                    )
+                }
+            }
+
+            item(key = "active_filters", contentType = "active_filters") {
+                AnimatedVisibility(
+                    modifier = Modifier.animateItemPlacement(
+                        animationSpec = MotionSpec.offsetSoft()
+                    ),
+                    visible = (searchQuery.isNotBlank() || selectedMood != null || selectedGroup != null) && !showSearchBar && !showMoodFilter && !showGroupFilter,
+                    enter = fadeIn(
+                        animationSpec = spring(
+                            dampingRatio = Spring.DampingRatioNoBouncy,
+                            stiffness = Spring.StiffnessMedium
                         )
-                        
-                        // alpha 淡入（0 → 1）
-                        val alpha by animateFloatAsState(
-                            targetValue = if (isVisible) 1f else 0f,
-                            animationSpec = tween(durationMillis = 450),
-                            label = "card_alpha"
+                    ) + expandVertically(
+                        expandFrom = Alignment.Top,
+                        animationSpec = spring(
+                            dampingRatio = Spring.DampingRatioNoBouncy,
+                            stiffness = Spring.StiffnessMedium
                         )
-                        
-                        DiaryCard(
-                            entry = entry,
-                            onClick = { onNavigateToDetail(entry.id) },
-                            onFavoriteClick = { viewModel.toggleFavorite(entry) },
-                            modifier = Modifier
-                                .graphicsLayer {
-                                    scaleX = scale
-                                    scaleY = scale
-                                    this.alpha = alpha
-                                }
-                                .animateItemPlacement(
-                                    animationSpec = MotionSpec.offsetSoft()
-                                )
+                    ),
+                    exit = fadeOut(
+                        animationSpec = tween(durationMillis = 150, easing = MotionEasing.Exit)
+                    ) + shrinkVertically(
+                        shrinkTowards = Alignment.Top,
+                        animationSpec = tween(durationMillis = 150, easing = MotionEasing.Exit)
+                    )
+                ) {
+                    FilterChipRow(
+                        searchQuery = searchQuery,
+                        selectedMood = selectedMood,
+                        selectedGroup = selectedGroup,
+                        showFavoritesOnly = false,
+                        onClearFilters = { viewModel.clearFilters() }
+                    )
+                }
+            }
+
+            if (entries.isEmpty()) {
+                item(key = "empty_state", contentType = "empty_state") {
+                    Box(
+                        modifier = Modifier
+                            .fillParentMaxSize()
+                            .animateItemPlacement(
+                                animationSpec = MotionSpec.offsetSoft()
+                            )
+                    ) {
+                        EmptyState(
+                            hasFilters = searchQuery.isNotBlank() || selectedMood != null || showFavoritesOnly,
+                            onCreateFirst = { onNavigateToEdit(null) }
                         )
-                    }
-                    
-                    // Bottom spacing for FAB
-                    item {
-                        Spacer(modifier = Modifier.height(ComponentSize.FABSize + Spacing.L))
                     }
                 }
+            } else {
+                itemsIndexed(
+                    items = entries,
+                    key = { _, entry -> entry.id },
+                    contentType = { _, _ -> "diary_card" }
+                ) { index, entry ->
+                    // Google Keep 风格入场动画：scale + fade
+                    var isVisible by remember(entry.id, entries.size) {
+                        mutableStateOf(false)
+                    }
+
+                    LaunchedEffect(entry.id, entries.size) {
+                        delay((index.coerceAtMost(8) * 24L) + 32L)
+                        isVisible = true
+                    }
+
+                    // 根据用户设置动态调整动画参数
+                    val (damping, stiffness) = when (animationSpeed) {
+                        ThemePreferences.AnimationSpeed.ELEGANT -> 0.75f to 280f
+                        ThemePreferences.AnimationSpeed.STANDARD -> 0.68f to 380f
+                        ThemePreferences.AnimationSpeed.SWIFT -> 0.85f to 520f
+                    }
+
+                    // scale 动画（0.92 → 1.0，参考 Google Keep）
+                    val scale by animateFloatAsState(
+                        targetValue = if (isVisible) 1f else 0.92f,
+                        animationSpec = spring(
+                            dampingRatio = damping,
+                            stiffness = stiffness
+                        ),
+                        label = "card_scale"
+                    )
+
+                    // alpha 淡入（0 → 1）
+                    val alpha by animateFloatAsState(
+                        targetValue = if (isVisible) 1f else 0f,
+                        animationSpec = tween(durationMillis = 450),
+                        label = "card_alpha"
+                    )
+
+                    DiaryCard(
+                        entry = entry,
+                        onClick = { onNavigateToDetail(entry.id) },
+                        onFavoriteClick = { viewModel.toggleFavorite(entry) },
+                        modifier = Modifier
+                            .graphicsLayer {
+                                scaleX = scale
+                                scaleY = scale
+                                this.alpha = alpha
+                            }
+                            .animateItemPlacement(
+                                animationSpec = MotionSpec.offsetSoft()
+                            )
+                    )
+                }
+            }
+
+            // Bottom spacing for FAB
+            item(key = "fab_bottom_spacing", contentType = "spacing") {
+                Spacer(modifier = Modifier.height(ComponentSize.FABSize + Spacing.L))
             }
         }
     }
