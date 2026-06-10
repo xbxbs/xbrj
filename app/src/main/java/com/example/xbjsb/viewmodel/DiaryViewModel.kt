@@ -1,8 +1,12 @@
 package com.example.xbjsb.viewmodel
 
 import android.app.Application
+import android.net.Uri
 import androidx.lifecycle.*
 import com.example.xbjsb.data.DiaryEntry
+import com.example.xbjsb.data.backup.DiaryBackupManager
+import com.example.xbjsb.data.backup.DiaryBackupSummary
+import com.example.xbjsb.data.backup.RestoreMode
 import com.example.xbjsb.data.repository.DiaryRepository
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
@@ -10,6 +14,7 @@ import kotlinx.coroutines.launch
 class DiaryViewModel(application: Application) : AndroidViewModel(application) {
     
     private val repository: DiaryRepository = DiaryRepository(application)
+    private val backupManager = DiaryBackupManager(application)
     
     // UI State
     private val _searchQuery = MutableStateFlow("")
@@ -43,10 +48,14 @@ class DiaryViewModel(application: Application) : AndroidViewModel(application) {
     // 搜索历史
     private val _searchHistory = MutableStateFlow<List<String>>(emptyList())
     val searchHistory: StateFlow<List<String>> = _searchHistory.asStateFlow()
-    
-    // 用户自定义分组列表
+// 用户自定义分组列表
     private val _customGroups = MutableStateFlow<List<String>>(emptyList())
     val customGroups: StateFlow<List<String>> = _customGroups.asStateFlow()
+    
+    // 备份/恢复状态
+    private val _backupUiState = MutableStateFlow(BackupUiState())
+    val backupUiState: StateFlow<BackupUiState> = _backupUiState.asStateFlow()
+    
     
     // Combined flow for filtered entries
     val entries: StateFlow<List<DiaryEntry>> = combine(
@@ -206,6 +215,90 @@ class DiaryViewModel(application: Application) : AndroidViewModel(application) {
     fun clearSearchHistory() {
         _searchHistory.value = emptyList()
     }
+
+    fun exportBackup(uri: Uri) {
+        if (_backupUiState.value.isProcessing) return
+        viewModelScope.launch {
+            _backupUiState.value = _backupUiState.value.copy(isProcessing = true, message = null)
+            val entries = repository.getAllEntriesSnapshot()
+            val result = backupManager.exportBackup(entries, uri)
+            _backupUiState.value = result.fold(
+                onSuccess = { summary ->
+                    BackupUiState(
+                        isProcessing = false,
+                        message = "备份导出成功：${summary.entryCount} 篇日记，${summary.imageCount} 张图片"
+                    )
+                },
+                onFailure = { error ->
+                    BackupUiState(
+                        isProcessing = false,
+                        message = "备份导出失败：${error.message ?: "未知错误"}"
+                    )
+                }
+            )
+        }
+    }
+
+    fun prepareRestore(uri: Uri) {
+        if (_backupUiState.value.isProcessing) return
+        viewModelScope.launch {
+            _backupUiState.value = _backupUiState.value.copy(isProcessing = true, message = null)
+            val result = backupManager.readBackupSummary(uri)
+            _backupUiState.value = result.fold(
+                onSuccess = { summary ->
+                    BackupUiState(
+                        isProcessing = false,
+                        pendingSummary = summary,
+                        pendingRestoreUri = uri
+                    )
+                },
+                onFailure = { error ->
+                    BackupUiState(
+                        isProcessing = false,
+                        message = "读取备份失败：${error.message ?: "备份文件格式无效"}"
+                    )
+                }
+            )
+        }
+    }
+
+    fun restoreBackup(mode: RestoreMode) {
+        val uri = _backupUiState.value.pendingRestoreUri ?: return
+        if (_backupUiState.value.isProcessing) return
+        viewModelScope.launch {
+            _backupUiState.value = _backupUiState.value.copy(isProcessing = true, message = null)
+            val currentEntries = repository.getAllEntriesSnapshot()
+            val result = backupManager.restoreBackup(uri, currentEntries, mode)
+            if (result.isSuccess) {
+                val restoredEntries = result.getOrThrow()
+                when (mode) {
+                    RestoreMode.MERGE -> repository.saveAll(restoredEntries)
+                    RestoreMode.REPLACE -> repository.replaceAll(restoredEntries)
+                }
+                _backupUiState.value = BackupUiState(
+                    isProcessing = false,
+                    message = "恢复成功：当前共有 ${restoredEntries.size} 篇日记"
+                )
+            } else {
+                val error = result.exceptionOrNull()
+                _backupUiState.value = BackupUiState(
+                    isProcessing = false,
+                    message = "恢复失败：${error?.message ?: "未知错误"}"
+                )
+            }
+        }
+    }
+
+    fun dismissRestoreDialog() {
+        _backupUiState.value = _backupUiState.value.copy(
+            pendingSummary = null,
+            pendingRestoreUri = null
+        )
+    }
+
+    fun clearBackupMessage() {
+        _backupUiState.value = _backupUiState.value.copy(message = null)
+    }
 }
 
 data class DraftData(
@@ -213,4 +306,11 @@ data class DraftData(
     val content: String,
     val mood: String?,
     val tags: List<String>
+)
+
+data class BackupUiState(
+    val isProcessing: Boolean = false,
+    val message: String? = null,
+    val pendingSummary: DiaryBackupSummary? = null,
+    val pendingRestoreUri: Uri? = null
 )

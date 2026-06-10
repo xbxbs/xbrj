@@ -19,12 +19,13 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.unit.IntSize
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -34,7 +35,9 @@ import com.example.xbjsb.ui.components.DiaryCard
 import com.example.xbjsb.ui.components.bounceClick
 import com.example.xbjsb.ui.theme.*
 import com.example.xbjsb.viewmodel.DiaryViewModel
+import kotlin.math.roundToInt
 import kotlinx.coroutines.delay
+import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.platform.LocalContext
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
@@ -64,28 +67,57 @@ fun DiaryListScreen(
     var showMoodFilter by remember { mutableStateOf(false) }
     var showGroupFilter by remember { mutableStateOf(false) }
     var showMoreMenu by remember { mutableStateOf(false) }
-    
     val listState = rememberLazyListState()
+    val isFilterPanelVisible = showSearchBar || showMoodFilter || showGroupFilter
+    var lastVisibleShowSearch by remember { mutableStateOf(false) }
+    var lastVisibleShowMood by remember { mutableStateOf(false) }
+    var lastVisibleShowGroup by remember { mutableStateOf(false) }
+    if (isFilterPanelVisible) {
+        SideEffect {
+            lastVisibleShowSearch = showSearchBar
+            lastVisibleShowMood = showMoodFilter
+            lastVisibleShowGroup = showGroupFilter
+        }
+    }
+    val panelContentShowSearch = if (isFilterPanelVisible) showSearchBar else lastVisibleShowSearch
+    val panelContentShowMood = if (isFilterPanelVisible) showMoodFilter else lastVisibleShowMood
+    val panelContentShowGroup = if (isFilterPanelVisible) showGroupFilter else lastVisibleShowGroup
     val filterPanelEnterStiffness: Float
     val filterPanelEnterDamping: Float
     val filterPanelExitDuration: Int
+    val listReflowDamping: Float
+    val listReflowStiffness: Float
+    val filterCollapseEasing = CubicBezierEasing(0.2f, 0f, 0f, 1f)
     when (animationSpeed) {
         ThemePreferences.AnimationSpeed.ELEGANT -> {
-            filterPanelEnterStiffness = 220f
-            filterPanelEnterDamping = 0.86f
-            filterPanelExitDuration = 260
+            filterPanelEnterStiffness = 190f
+            filterPanelEnterDamping = 0.90f
+            filterPanelExitDuration = 420
+            listReflowDamping = 0.92f
+            listReflowStiffness = 230f
         }
         ThemePreferences.AnimationSpeed.STANDARD -> {
-            filterPanelEnterStiffness = 320f
-            filterPanelEnterDamping = 0.82f
-            filterPanelExitDuration = 210
+            filterPanelEnterStiffness = 270f
+            filterPanelEnterDamping = 0.88f
+            filterPanelExitDuration = 380
+            listReflowDamping = 0.94f
+            listReflowStiffness = 310f
         }
         ThemePreferences.AnimationSpeed.SWIFT -> {
-            filterPanelEnterStiffness = 430f
-            filterPanelEnterDamping = 0.84f
-            filterPanelExitDuration = 165
+            filterPanelEnterStiffness = 360f
+            filterPanelEnterDamping = 0.88f
+            filterPanelExitDuration = 300
+            listReflowDamping = 0.96f
+            listReflowStiffness = 400f
         }
     }
+    val listReflowSpec = remember(animationSpeed, filterPanelExitDuration) {
+        tween<IntOffset>(
+            durationMillis = filterPanelExitDuration,
+            easing = filterCollapseEasing
+        )
+    }
+    
     
     // FAB 展开/收起逻辑
     val isScrollingUp by remember {
@@ -325,33 +357,24 @@ fun DiaryListScreen(
         ) {
             item(key = "filter_panel", contentType = "filter_panel") {
                 AnimatedVisibility(
-                    modifier = Modifier.animateItemPlacement(
-                        animationSpec = MotionSpec.offsetSoft()
-                    ),
-                    visible = showSearchBar || showMoodFilter || showGroupFilter,
+                    visible = isFilterPanelVisible,
                     enter = fadeIn(
-                        animationSpec = spring(
-                            dampingRatio = filterPanelEnterDamping,
-                            stiffness = filterPanelEnterStiffness
-                        )
+                        animationSpec = tween(durationMillis = filterPanelExitDuration, easing = filterCollapseEasing)
                     ) + expandVertically(
                         expandFrom = Alignment.Top,
-                        animationSpec = spring(
-                            dampingRatio = filterPanelEnterDamping,
-                            stiffness = filterPanelEnterStiffness
-                        )
+                        animationSpec = tween(durationMillis = filterPanelExitDuration, easing = filterCollapseEasing)
                     ),
                     exit = fadeOut(
-                        animationSpec = tween(durationMillis = filterPanelExitDuration, easing = MotionEasing.Exit)
+                        animationSpec = tween(durationMillis = filterPanelExitDuration, easing = filterCollapseEasing)
                     ) + shrinkVertically(
                         shrinkTowards = Alignment.Top,
-                        animationSpec = tween(durationMillis = filterPanelExitDuration, easing = MotionEasing.Exit)
+                        animationSpec = tween(durationMillis = filterPanelExitDuration, easing = filterCollapseEasing)
                     )
                 ) {
                     FilterPanel(
-                        showSearch = showSearchBar,
-                        showMood = showMoodFilter,
-                        showGroup = showGroupFilter,
+                        showSearch = panelContentShowSearch,
+                        showMood = panelContentShowMood,
+                        showGroup = panelContentShowGroup,
                         query = searchQuery,
                         selectedMood = selectedMood,
                         selectedGroup = selectedGroup,
@@ -370,7 +393,7 @@ fun DiaryListScreen(
             item(key = "active_filters", contentType = "active_filters") {
                 AnimatedVisibility(
                     modifier = Modifier.animateItemPlacement(
-                        animationSpec = MotionSpec.offsetSoft()
+                        animationSpec = listReflowSpec
                     ),
                     visible = (searchQuery.isNotBlank() || selectedMood != null || selectedGroup != null) && !showSearchBar && !showMoodFilter && !showGroupFilter,
                     enter = fadeIn(
@@ -386,10 +409,10 @@ fun DiaryListScreen(
                         )
                     ),
                     exit = fadeOut(
-                        animationSpec = tween(durationMillis = 150, easing = MotionEasing.Exit)
+                        animationSpec = tween(durationMillis = 170, easing = filterCollapseEasing)
                     ) + shrinkVertically(
                         shrinkTowards = Alignment.Top,
-                        animationSpec = tween(durationMillis = 150, easing = MotionEasing.Exit)
+                        animationSpec = tween(durationMillis = 170, easing = filterCollapseEasing)
                     )
                 ) {
                     FilterChipRow(
@@ -408,7 +431,7 @@ fun DiaryListScreen(
                         modifier = Modifier
                             .fillParentMaxSize()
                             .animateItemPlacement(
-                                animationSpec = MotionSpec.offsetSoft()
+                                animationSpec = listReflowSpec
                             )
                     ) {
                         EmptyState(
@@ -468,7 +491,7 @@ fun DiaryListScreen(
                                 this.alpha = alpha
                             }
                             .animateItemPlacement(
-                                animationSpec = MotionSpec.offsetSoft()
+                                animationSpec = listReflowSpec
                             )
                     )
                 }
@@ -483,17 +506,120 @@ fun DiaryListScreen(
 }
 
 private data class FilterPanelMotion(
-    val panelDamping: Float,
-    val panelStiffness: Float,
     val enterFadeDamping: Float,
     val enterFadeStiffness: Float,
     val enterExpandDamping: Float,
     val enterExpandStiffness: Float,
     val exitFadeDuration: Int,
     val exitShrinkDuration: Int,
-    val dividerEnterDuration: Int,
-    val dividerExitDuration: Int
+    val exitEasing: androidx.compose.animation.core.Easing
 )
+
+private data class FilterPanelState(
+    val search: Boolean,
+    val mood: Boolean,
+    val group: Boolean
+) {
+    val isVisible: Boolean get() = search || mood || group
+
+    fun include(other: FilterPanelState) = FilterPanelState(
+        search = search || other.search,
+        mood = mood || other.mood,
+        group = group || other.group
+    )
+}
+
+@Composable
+private fun FilterAnimatedGap(
+    visible: Boolean,
+    height: androidx.compose.ui.unit.Dp,
+    durationMillis: Int,
+    easing: androidx.compose.animation.core.Easing
+) {
+    val progress by animateFloatAsState(
+        targetValue = if (visible) 1f else 0f,
+        animationSpec = tween(durationMillis = durationMillis, easing = easing),
+        label = "filter_gap_progress"
+    )
+    Spacer(modifier = Modifier.height(height * progress))
+}
+
+@Composable
+private fun FilterSectionSlot(
+    visible: Boolean,
+    modifier: Modifier = Modifier,
+    fadeDuration: Int,
+    easing: androidx.compose.animation.core.Easing,
+    content: @Composable () -> Unit
+) {
+    var mounted by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) { mounted = true }
+
+    val progress by animateFloatAsState(
+        targetValue = if (visible && mounted) 1f else 0f,
+        animationSpec = tween(durationMillis = fadeDuration, easing = easing),
+        label = "filter_section_progress"
+    )
+
+    Layout(
+        modifier = modifier
+            .fillMaxWidth()
+            .clipToBounds(),
+        content = {
+            Box(
+                modifier = Modifier.graphicsLayer {
+                    alpha = progress
+                    translationY = (1f - progress) * -6f
+                }
+            ) {
+                content()
+            }
+        }
+    ) { measurables, constraints ->
+        val placeable = measurables.firstOrNull()?.measure(constraints.copy(minHeight = 0))
+        val fullHeight = placeable?.height ?: 0
+        val animatedHeight = (fullHeight * progress).roundToInt().coerceAtLeast(0)
+
+        layout(constraints.maxWidth, animatedHeight) {
+            placeable?.placeRelative(0, 0)
+        }
+    }
+}
+
+@Composable
+private fun FilterDivider(
+    visible: Boolean,
+    fadeDuration: Int,
+    easing: androidx.compose.animation.core.Easing
+) {
+    val progress by animateFloatAsState(
+        targetValue = if (visible) 1f else 0f,
+        animationSpec = tween(durationMillis = fadeDuration, easing = easing),
+        label = "filter_divider_progress"
+    )
+
+    Layout(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clipToBounds(),
+        content = {
+            HorizontalDivider(
+                modifier = Modifier
+                    .padding(horizontal = Spacing.S)
+                    .graphicsLayer { alpha = progress },
+                color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.22f)
+            )
+        }
+    ) { measurables, constraints ->
+        val placeable = measurables.firstOrNull()?.measure(constraints.copy(minHeight = 0))
+        val fullHeight = placeable?.height ?: 0
+        val animatedHeight = (fullHeight * progress).roundToInt().coerceAtLeast(0)
+
+        layout(constraints.maxWidth, animatedHeight) {
+            placeable?.placeRelative(0, 0)
+        }
+    }
+}
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -540,68 +666,54 @@ fun FilterPanel(
     val filterMotion = remember(animationSpeed) {
         when (animationSpeed) {
             ThemePreferences.AnimationSpeed.ELEGANT -> FilterPanelMotion(
-                panelDamping = 0.92f,
-                panelStiffness = 210f,
                 enterFadeDamping = 0.94f,
                 enterFadeStiffness = 230f,
                 enterExpandDamping = 0.92f,
                 enterExpandStiffness = 220f,
-                exitFadeDuration = 240,
-                exitShrinkDuration = 260,
-                dividerEnterDuration = 210,
-                dividerExitDuration = 180
+                exitFadeDuration = 360,
+                exitShrinkDuration = 420,
+                exitEasing = CubicBezierEasing(0.2f, 0f, 0f, 1f)
             )
             ThemePreferences.AnimationSpeed.STANDARD -> FilterPanelMotion(
-                panelDamping = 0.88f,
-                panelStiffness = 300f,
                 enterFadeDamping = 0.90f,
                 enterFadeStiffness = 320f,
                 enterExpandDamping = 0.88f,
                 enterExpandStiffness = 300f,
-                exitFadeDuration = 190,
-                exitShrinkDuration = 210,
-                dividerEnterDuration = 160,
-                dividerExitDuration = 130
+                exitFadeDuration = 320,
+                exitShrinkDuration = 380,
+                exitEasing = CubicBezierEasing(0.2f, 0f, 0f, 1f)
             )
             ThemePreferences.AnimationSpeed.SWIFT -> FilterPanelMotion(
-                panelDamping = 0.88f,
-                panelStiffness = 420f,
                 enterFadeDamping = 0.90f,
                 enterFadeStiffness = 420f,
                 enterExpandDamping = 0.88f,
                 enterExpandStiffness = 400f,
-                exitFadeDuration = 145,
-                exitShrinkDuration = 160,
-                dividerEnterDuration = 120,
-                dividerExitDuration = 100
+                exitFadeDuration = 240,
+                exitShrinkDuration = 300,
+                exitEasing = CubicBezierEasing(0.24f, 0f, 0.12f, 1f)
             )
         }
     }
 
-    val panelSizeSpec = spring<IntSize>(
-        dampingRatio = filterMotion.panelDamping,
-        stiffness = filterMotion.panelStiffness
-    )
-    val filterEnter = fadeIn(
-        animationSpec = spring(
-            dampingRatio = filterMotion.enterFadeDamping,
-            stiffness = filterMotion.enterFadeStiffness
+    val targetState = remember(showSearch, showMood, showGroup) {
+        FilterPanelState(
+            search = showSearch,
+            mood = showMood,
+            group = showGroup
         )
-    ) + expandVertically(
-        expandFrom = Alignment.Top,
-        animationSpec = spring(
-            dampingRatio = filterMotion.enterExpandDamping,
-            stiffness = filterMotion.enterExpandStiffness
-        )
-    )
-    val filterExit = fadeOut(
-        animationSpec = tween(durationMillis = filterMotion.exitFadeDuration, easing = MotionEasing.Exit)
-    ) + shrinkVertically(
-        shrinkTowards = Alignment.Top,
-        animationSpec = tween(durationMillis = filterMotion.exitShrinkDuration, easing = MotionEasing.Exit)
-    )
-    val dividerEnter = fadeIn(animationSpec = tween(durationMillis = filterMotion.dividerEnterDuration, easing = MotionEasing.Smooth))
-    val dividerExit = fadeOut(animationSpec = tween(durationMillis = filterMotion.dividerExitDuration, easing = MotionEasing.Exit))
+    }
+    var renderState by remember { mutableStateOf(targetState) }
+
+    LaunchedEffect(targetState, filterMotion.exitShrinkDuration) {
+        val expandedRenderState = renderState.include(targetState)
+        renderState = expandedRenderState
+        if (expandedRenderState != targetState) {
+            delay(filterMotion.exitShrinkDuration.toLong())
+            renderState = targetState
+        }
+    }
+
+    // 分隔线不再单独持有布局动画生命周期，统一交给父 Column 的 animateContentSize 处理。
 
     Surface(
         modifier = Modifier
@@ -615,16 +727,16 @@ fun FilterPanel(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .animateContentSize(animationSpec = panelSizeSpec)
                 .padding(Spacing.L),
-            verticalArrangement = Arrangement.spacedBy(Spacing.M)
+            verticalArrangement = Arrangement.Top
         ) {
-                AnimatedVisibility(
-                    visible = showSearch,
-                    enter = filterEnter,
-                    exit = filterExit
-                ) {
-                    Column {
+                if (renderState.search) {
+                    FilterSectionSlot(
+                        visible = targetState.search,
+                        fadeDuration = filterMotion.exitFadeDuration,
+                        easing = filterMotion.exitEasing
+                    ) {
+                        Column {
                         TextField(
                             value = query,
                             onValueChange = onQueryChange,
@@ -682,23 +794,40 @@ fun FilterPanel(
                         }
                     }
                 }
+            }
 
-                AnimatedVisibility(
-                    visible = showSearch && showMood,
-                    enter = dividerEnter,
-                    exit = dividerExit
-                ) {
-                    HorizontalDivider(
-                        modifier = Modifier.padding(horizontal = Spacing.S),
-                        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.22f)
+                if (renderState.search && (renderState.mood || renderState.group)) {
+                    FilterAnimatedGap(
+                        visible = targetState.search && (targetState.mood || targetState.group),
+                        height = Spacing.M,
+                        durationMillis = filterMotion.exitShrinkDuration,
+                        easing = filterMotion.exitEasing
                     )
                 }
 
-                AnimatedVisibility(
-                    visible = showMood,
-                    enter = filterEnter,
-                    exit = filterExit
-                ) {
+                if (renderState.search && renderState.mood) {
+                    FilterDivider(
+                        visible = targetState.search && targetState.mood,
+                        fadeDuration = filterMotion.exitFadeDuration,
+                        easing = filterMotion.exitEasing
+                    )
+                }
+
+                if (renderState.search && renderState.mood) {
+                    FilterAnimatedGap(
+                        visible = targetState.search && targetState.mood,
+                        height = Spacing.M,
+                        durationMillis = filterMotion.exitShrinkDuration,
+                        easing = filterMotion.exitEasing
+                    )
+                }
+
+                if (renderState.mood) {
+                    FilterSectionSlot(
+                        visible = targetState.mood,
+                        fadeDuration = filterMotion.exitFadeDuration,
+                        easing = filterMotion.exitEasing
+                    ) {
                     Column(
                         modifier = Modifier.fillMaxWidth(),
                         verticalArrangement = Arrangement.spacedBy(Spacing.S)
@@ -761,23 +890,31 @@ fun FilterPanel(
                         }
                     }
                 }
+            }
 
-                AnimatedVisibility(
-                    visible = showMood && showGroup,
-                    enter = dividerEnter,
-                    exit = dividerExit
-                ) {
-                    HorizontalDivider(
-                        modifier = Modifier.padding(horizontal = Spacing.S),
-                        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.22f)
+                if (renderState.mood && renderState.group) {
+                    FilterAnimatedGap(
+                        visible = targetState.mood && targetState.group,
+                        height = Spacing.M,
+                        durationMillis = filterMotion.exitShrinkDuration,
+                        easing = filterMotion.exitEasing
                     )
                 }
 
-                AnimatedVisibility(
-                    visible = showGroup,
-                    enter = filterEnter,
-                    exit = filterExit
-                ) {
+                if (renderState.mood && renderState.group) {
+                    FilterDivider(
+                        visible = targetState.mood && targetState.group,
+                        fadeDuration = filterMotion.exitFadeDuration,
+                        easing = filterMotion.exitEasing
+                    )
+                }
+
+                if (renderState.group) {
+                    FilterSectionSlot(
+                        visible = targetState.group,
+                        fadeDuration = filterMotion.exitFadeDuration,
+                        easing = filterMotion.exitEasing
+                    ) {
                     Column(
                         modifier = Modifier.fillMaxWidth(),
                         verticalArrangement = Arrangement.spacedBy(Spacing.S)
@@ -832,6 +969,7 @@ fun FilterPanel(
             }
         }
     }
+}
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable

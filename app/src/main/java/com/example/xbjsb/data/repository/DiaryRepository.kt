@@ -36,6 +36,29 @@ class DiaryRepository(private val context: Context) {
     
     val entryCount: Flow<Int> = allEntries.map { it.size }
     
+    suspend fun getAllEntriesSnapshot(): List<DiaryEntry> {
+        val json = context.dataStore.data.map { it[ENTRIES_KEY] ?: "[]" }.first()
+        val type = object : TypeToken<List<DiaryEntry>>() {}.type
+        return try {
+            val entries: List<DiaryEntry> = gson.fromJson(json, type)
+            entries.sortedByDescending { it.timestamp }
+        } catch (e: Exception) {
+            emptyList()
+        }
+    }
+    
+    suspend fun saveAll(entries: List<DiaryEntry>) {
+        context.dataStore.edit { preferences ->
+            preferences[ENTRIES_KEY] = gson.toJson(entries.sortedByDescending { it.timestamp })
+        }
+    }
+    
+    suspend fun replaceAll(entries: List<DiaryEntry>) {
+        val currentEntries = getAllEntriesSnapshot()
+        currentEntries.forEach { deleteImagesForEntry(it) }
+        saveAll(entries)
+    }
+    
     suspend fun getEntryById(id: Long): DiaryEntry? {
         val json = context.dataStore.data.map { it[ENTRIES_KEY] ?: "[]" }.first()
         val type = object : TypeToken<List<DiaryEntry>>() {}.type

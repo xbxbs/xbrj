@@ -24,10 +24,18 @@ import androidx.compose.ui.graphics.vector.path
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.xbjsb.data.AiPreferences
 import com.example.xbjsb.data.ThemePreferences
+import com.example.xbjsb.data.backup.RestoreMode
 import com.example.xbjsb.ui.components.ApplyFrostedDialogWindow
+import com.example.xbjsb.viewmodel.DiaryViewModel
 import kotlinx.coroutines.launch
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -43,6 +51,33 @@ fun SettingsScreen(
     val frostedBlurEnabled by themePreferences.frostedBlurEnabledFlow.collectAsState(initial = false)
     val animationSpeed by themePreferences.animationSpeedFlow.collectAsState(initial = ThemePreferences.AnimationSpeed.ELEGANT)
     val scope = rememberCoroutineScope()
+    val diaryViewModel: DiaryViewModel = viewModel()
+    val backupUiState by diaryViewModel.backupUiState.collectAsState()
+    val snackbarHostState = remember { SnackbarHostState() }
+
+    val exportBackupLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CreateDocument("application/zip")
+    ) { uri ->
+        if (uri != null) {
+            diaryViewModel.exportBackup(uri)
+        }
+    }
+
+    val restoreBackupLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        if (uri != null) {
+            diaryViewModel.prepareRestore(uri)
+        }
+    }
+
+    LaunchedEffect(backupUiState.message) {
+        val message = backupUiState.message
+        if (message != null) {
+            snackbarHostState.showSnackbar(message)
+            diaryViewModel.clearBackupMessage()
+        }
+    }
 
     var showAboutDialog by remember { mutableStateOf(false) }
     var showThemeModeDialog by remember { mutableStateOf(false) }
@@ -65,6 +100,7 @@ fun SettingsScreen(
     }
     
     Scaffold(
+        snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
             TopAppBar(
                 title = { Text("设置") },
@@ -156,6 +192,67 @@ fun SettingsScreen(
                 modifier = Modifier.padding(vertical = 8.dp),
                 color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f)
             )
+
+            // 数据管理
+            Text(
+                text = "数据管理",
+                style = MaterialTheme.typography.titleSmall,
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.padding(start = 4.dp, top = 8.dp, bottom = 4.dp)
+            )
+
+            SettingItem(
+                icon = Icons.Filled.Backup,
+                title = "导出备份",
+                subtitle = if (backupUiState.isProcessing) {
+                    "正在处理，请稍候…"
+                } else {
+                    "将全部日记和图片保存为一个备份文件"
+                },
+                onClick = {
+                    if (!backupUiState.isProcessing) {
+                        val timestamp = SimpleDateFormat("yyyyMMdd_HHmm", Locale.CHINA).format(Date())
+                        exportBackupLauncher.launch("xbjsb_backup_$timestamp.zip")
+                    }
+                }
+            )
+
+            SettingItem(
+                icon = Icons.Filled.Restore,
+                title = "恢复备份",
+                subtitle = if (backupUiState.isProcessing) {
+                    "正在处理，请稍候…"
+                } else {
+                    "从备份文件恢复日记，可选择合并或覆盖"
+                },
+                onClick = {
+                    if (!backupUiState.isProcessing) {
+                        restoreBackupLauncher.launch(arrayOf("application/zip", "application/octet-stream", "*/*"))
+                    }
+                }
+            )
+
+            if (backupUiState.isProcessing) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 4.dp, vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+                    Text(
+                        text = "正在处理备份数据…",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+            
+            HorizontalDivider(
+                modifier = Modifier.padding(vertical = 8.dp),
+                color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f)
+            )
             
             // 关于
             Text(
@@ -172,6 +269,239 @@ fun SettingsScreen(
                 onClick = { showAboutDialog = true }
             )
         }
+    }
+
+    val pendingSummary = backupUiState.pendingSummary
+    if (pendingSummary != null) {
+        val backupTime = remember(pendingSummary.createdAt) {
+            SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.CHINA).format(Date(pendingSummary.createdAt))
+        }
+        AlertDialog(
+            onDismissRequest = {
+                if (!backupUiState.isProcessing) diaryViewModel.dismissRestoreDialog()
+            },
+            title = {
+                ApplyFrostedDialogWindow(enabled = frostedBlurEnabled)
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Surface(
+                        modifier = Modifier.size(56.dp),
+                        shape = RoundedCornerShape(20.dp),
+                        color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.65f)
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Icon(
+                                Icons.Filled.Restore,
+                                contentDescription = null,
+                                modifier = Modifier.size(30.dp),
+                                tint = MaterialTheme.colorScheme.primary
+                            )
+                        }
+                    }
+                    Text(
+                        text = "恢复备份",
+                        style = MaterialTheme.typography.headlineSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                }
+            },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                    Text(
+                        text = "检测到备份文件",
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+
+                    Surface(
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(18.dp),
+                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.42f),
+                        border = BorderStroke(
+                            1.dp,
+                            MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.42f)
+                        )
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(16.dp),
+                            verticalArrangement = Arrangement.spacedBy(12.dp)
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(
+                                    Icons.Filled.Description,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(20.dp),
+                                    tint = MaterialTheme.colorScheme.primary
+                                )
+                                Spacer(Modifier.width(10.dp))
+                                Text(
+                                    text = "日记",
+                                    modifier = Modifier.weight(1f),
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                                Text(
+                                    text = "${pendingSummary.entryCount} 篇",
+                                    style = MaterialTheme.typography.bodyLarge,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.onSurface
+                                )
+                            }
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(
+                                    Icons.Filled.Image,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(20.dp),
+                                    tint = MaterialTheme.colorScheme.primary
+                                )
+                                Spacer(Modifier.width(10.dp))
+                                Text(
+                                    text = "图片",
+                                    modifier = Modifier.weight(1f),
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                                Text(
+                                    text = "${pendingSummary.imageCount} 张",
+                                    style = MaterialTheme.typography.bodyLarge,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.onSurface
+                                )
+                            }
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(
+                                    Icons.Filled.Schedule,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(20.dp),
+                                    tint = MaterialTheme.colorScheme.primary
+                                )
+                                Spacer(Modifier.width(10.dp))
+                                Text(
+                                    text = "备份时间",
+                                    modifier = Modifier.weight(1f),
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                                Text(
+                                    text = backupTime,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = MaterialTheme.colorScheme.onSurface
+                                )
+                            }
+                        }
+                    }
+
+                    Surface(
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(16.dp),
+                        color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.32f),
+                        border = BorderStroke(
+                            1.dp,
+                            MaterialTheme.colorScheme.primary.copy(alpha = 0.20f)
+                        )
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(14.dp),
+                            verticalAlignment = Alignment.Top
+                        ) {
+                            Icon(
+                                Icons.Filled.AddCircle,
+                                contentDescription = null,
+                                modifier = Modifier.size(22.dp),
+                                tint = MaterialTheme.colorScheme.primary
+                            )
+                            Spacer(Modifier.width(10.dp))
+                            Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                                Text(
+                                    text = "合并恢复（推荐）",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.onSurface
+                                )
+                                Text(
+                                    text = "保留当前日记，只导入备份中不存在的内容。",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+                    }
+
+                    Surface(
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(16.dp),
+                        color = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.22f),
+                        border = BorderStroke(
+                            1.dp,
+                            MaterialTheme.colorScheme.error.copy(alpha = 0.22f)
+                        )
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(14.dp),
+                            verticalAlignment = Alignment.Top
+                        ) {
+                            Icon(
+                                Icons.Filled.Warning,
+                                contentDescription = null,
+                                modifier = Modifier.size(22.dp),
+                                tint = MaterialTheme.colorScheme.error
+                            )
+                            Spacer(Modifier.width(10.dp))
+                            Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                                Text(
+                                    text = "覆盖恢复（危险）",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.error
+                                )
+                                Text(
+                                    text = "清空当前所有日记，并替换为备份内容，不可撤销。",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.error
+                                )
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                FilledTonalButton(
+                    enabled = !backupUiState.isProcessing,
+                    onClick = { diaryViewModel.restoreBackup(RestoreMode.MERGE) },
+                    colors = ButtonDefaults.filledTonalButtonColors(
+                        containerColor = MaterialTheme.colorScheme.primary,
+                        contentColor = MaterialTheme.colorScheme.onPrimary
+                    )
+                ) {
+                    Text("合并恢复")
+                }
+            },
+            dismissButton = {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    TextButton(
+                        enabled = !backupUiState.isProcessing,
+                        onClick = { diaryViewModel.dismissRestoreDialog() }
+                    ) {
+                        Text("取消")
+                    }
+                    TextButton(
+                        enabled = !backupUiState.isProcessing,
+                        onClick = { diaryViewModel.restoreBackup(RestoreMode.REPLACE) },
+                        colors = ButtonDefaults.textButtonColors(
+                            contentColor = MaterialTheme.colorScheme.error
+                        )
+                    ) {
+                        Text("覆盖恢复")
+                    }
+                }
+            }
+        )
     }
     
     // 主题模式对话框
