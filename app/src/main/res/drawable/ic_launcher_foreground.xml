@@ -1,0 +1,102 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- Safe-area group: centered diary notebook -->
+    <group>
+        <!-- Book soft shadow -->
+        <path
+            android:fillColor="#33231512"
+            android:pathData="M30,28C30,24.7 32.7,22 36,22H74C77.3,22 80,24.7 80,28V82C80,85.3 77.3,88 74,88H36C32.7,88 30,85.3 30,82Z" />
+
+        <!-- Book cover -->
+        <path
+            android:fillColor="#FFFFFCF8"
+            android:pathData="M28,25C28,21.7 30.7,19 34,19H72C75.3,19 78,21.7 78,25V79C78,82.3 75.3,85 72,85H34C30.7,85 28,82.3 28,79Z" />
+
+        <!-- Book warm edge -->
+        <path
+            android:fillColor="#FFFFD7B0"
+            android:pathData="M28,25C28,21.7 30.7,19 34,19H40V85H34C30.7,85 28,82.3 28,79Z" />
+
+        <!-- Cover outline -->
+        <path
+            android:fillColor="#00000000"
+            android:pathData="M28,25C28,21.7 30.7,19 34,19H72C75.3,19 78,21.7 78,25V79C78,82.3 75.3,85 72,85H34C30.7,85 28,82.3 28,79Z"
+            android:strokeColor="#338D4D19"
+            android:strokeWidth="1.2" />
+
+        <!-- Binding dots -->
+        <path
+            android:fillColor="#CC8D4D19"
+            android:pathData="M35,32m-1.8,0a1.8,1.8 0,1 0,3.6 0a1.8,1.8 0,1 0,-3.6 0" />
+        <path
+            android:fillColor="#CC8D4D19"
+            android:pathData="M35,45m-1.8,0a1.8,1.8 0,1 0,3.6 0a1.8,1.8 0,1 0,-3.6 0" />
+        <path
+            android:fillColor="#CC8D4D19"
+            android:pathData="M35,58m-1.8,0a1.8,1.8 0,1 0,3.6 0a1.8,1.8 0,1 0,-3.6 0" />
+        <path
+            android:fillColor="#CC8D4D19"
+            android:pathData="M35,71m-1.8,0a1.8,1.8 0,1 0,3.6 0a1.8,1.8 0,1 0,-3.6 0" />
+
+        <!-- Text lines -->
+        <path
+            android:fillColor="#00000000"
+            android:pathData="M47,34L67,34"
+            android:strokeColor="#668D4D19"
+            android:strokeWidth="2.2"
+            android:strokeLineCap="round" />
+        <path
+            android:fillColor="#00000000"
+            android:pathData="M47,45L70,45"
+            android:strokeColor="#448D4D19"
+            android:strokeWidth="1.8"
+            android:strokeLineCap="round" />
+        <path
+            android:fillColor="#00000000"
+            android:pathData="M47,55L63,55"
+            android:strokeColor="#448D4D19"
+            android:strokeWidth="1.8"
+            android:strokeLineCap="round" />
+
+        <!-- Quill pen shadow -->
+        <path
+            android:fillColor="#22000000"
+            android:pathData="M63,72C73,63 82,50 84,34C70,39 60,49 55,62C53,67 55,71 59,74C60,73 61.4,72.4 63,72Z" />
+
+        <!-- Quill feather -->
+        <path
+            android:fillColor="#FFFFB86B"
+            android:pathData="M61,70C72,60 82,47 84,31C68,36 57,47 52,61C50,67 54,72 61,70Z" />
+        <path
+            android:fillColor="#FFFFE1C2"
+            android:fillAlpha="0.78"
+            android:pathData="M58,66C67,57 76,47 81,36C70,41 60,50 55,62C54,65 55,67 58,66Z" />
+
+        <!-- Quill spine -->
+        <path
+            android:fillColor="#00000000"
+            android:pathData="M52,76C61,61 70,48 82,32"
+            android:strokeColor="#FF8D4D19"
+            android:strokeWidth="2.2"
+            android:strokeLineCap="round" />
+
+        <!-- Pen tip -->
+        <path
+            android:fillColor="#FF5B3414"
+            android:pathData="M49,78L54,74L57,77L51,82Z" />
+
+        <!-- Star sparkle -->
+        <path
+            android:fillColor="#FFFFF3C4"
+            android:pathData="M73,20L75.3,25.2L81,27L75.3,28.8L73,34L70.7,28.8L65,27L70.7,25.2Z" />
+        <path
+            android:fillColor="#FFFFF3C4"
+            android:fillAlpha="0.8"
+            android:pathData="M86,62L87.4,65.1L91,66L87.4,67.1L86,70L84.6,67.1L81,66L84.6,65.1Z" />
+    </group>
+</vector>
