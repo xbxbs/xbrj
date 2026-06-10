@@ -24,6 +24,7 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -65,6 +66,26 @@ fun DiaryListScreen(
     var showMoreMenu by remember { mutableStateOf(false) }
     
     val listState = rememberLazyListState()
+    val filterPanelEnterStiffness: Float
+    val filterPanelEnterDamping: Float
+    val filterPanelExitDuration: Int
+    when (animationSpeed) {
+        ThemePreferences.AnimationSpeed.ELEGANT -> {
+            filterPanelEnterStiffness = 220f
+            filterPanelEnterDamping = 0.86f
+            filterPanelExitDuration = 260
+        }
+        ThemePreferences.AnimationSpeed.STANDARD -> {
+            filterPanelEnterStiffness = 320f
+            filterPanelEnterDamping = 0.82f
+            filterPanelExitDuration = 210
+        }
+        ThemePreferences.AnimationSpeed.SWIFT -> {
+            filterPanelEnterStiffness = 430f
+            filterPanelEnterDamping = 0.84f
+            filterPanelExitDuration = 165
+        }
+    }
     
     // FAB 展开/收起逻辑
     val isScrollingUp by remember {
@@ -303,21 +324,21 @@ fun DiaryListScreen(
                 visible = showSearchBar || showMoodFilter || showGroupFilter,
                 enter = fadeIn(
                     animationSpec = spring(
-                        dampingRatio = 0.75f,
-                        stiffness = 380f
+                        dampingRatio = filterPanelEnterDamping,
+                        stiffness = filterPanelEnterStiffness
                     )
                 ) + expandVertically(
                     expandFrom = Alignment.Top,
                     animationSpec = spring(
-                        dampingRatio = 0.68f,
-                        stiffness = 380f
+                        dampingRatio = filterPanelEnterDamping,
+                        stiffness = filterPanelEnterStiffness
                     )
                 ),
                 exit = fadeOut(
-                    animationSpec = tween(durationMillis = 200, easing = FastOutLinearInEasing)
+                    animationSpec = tween(durationMillis = filterPanelExitDuration, easing = MotionEasing.Exit)
                 ) + shrinkVertically(
                     shrinkTowards = Alignment.Top,
-                    animationSpec = tween(durationMillis = 200, easing = FastOutLinearInEasing)
+                    animationSpec = tween(durationMillis = filterPanelExitDuration, easing = MotionEasing.Exit)
                 )
             ) {
                 FilterPanel(
@@ -333,7 +354,8 @@ fun DiaryListScreen(
                     onMoodSelected = { viewModel.setSelectedMood(it) },
                     onGroupSelected = { viewModel.setSelectedGroup(it) },
                     searchHistory = searchHistory,
-                    onRemoveHistory = { viewModel.removeSearchHistory(it) }
+                    onRemoveHistory = { viewModel.removeSearchHistory(it) },
+                    animationSpeed = animationSpeed
                 )
             }
             
@@ -444,6 +466,19 @@ fun DiaryListScreen(
     }
 }
 
+private data class FilterPanelMotion(
+    val panelDamping: Float,
+    val panelStiffness: Float,
+    val enterFadeDamping: Float,
+    val enterFadeStiffness: Float,
+    val enterExpandDamping: Float,
+    val enterExpandStiffness: Float,
+    val exitFadeDuration: Int,
+    val exitShrinkDuration: Int,
+    val dividerEnterDuration: Int,
+    val dividerExitDuration: Int
+)
+
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun FilterPanel(
@@ -459,7 +494,8 @@ fun FilterPanel(
     onMoodSelected: (String?) -> Unit,
     onGroupSelected: (String?) -> Unit,
     searchHistory: List<String>,
-    onRemoveHistory: (String) -> Unit
+    onRemoveHistory: (String) -> Unit,
+    animationSpeed: ThemePreferences.AnimationSpeed
 ) {
     val moods = listOf(
         "happy" to "😊 开心",
@@ -468,6 +504,88 @@ fun FilterPanel(
         "sad" to "😔 难过",
         "neutral" to "😐 一般"
     )
+
+    val isDark = MaterialTheme.colorScheme.background.luminance() < 0.5f
+    val fallbackMoodColor = MaterialTheme.colorScheme.surfaceVariant
+
+    fun moodColor(moodKey: String) = when (moodKey) {
+        "happy" -> if (isDark) MoodColors.happyDark else MoodColors.happy
+        "calm" -> if (isDark) MoodColors.calmDark else MoodColors.calm
+        "excited" -> if (isDark) MoodColors.excitedDark else MoodColors.excited
+        "sad" -> if (isDark) MoodColors.sadDark else MoodColors.sad
+        "neutral" -> if (isDark) MoodColors.neutralDark else MoodColors.neutral
+        else -> fallbackMoodColor
+    }
+
+    // 叠加过滤区采用“单一主物理系统”：
+    // 主 Column 统一负责整体高度变化；子区域只做透明度 + 高度展开/收缩，
+    // 不做独立滑动/缩放，避免叠加态各块抢节奏；同时避免纯淡出导致高度最后一帧才释放。
+    // 同时接入用户的“动画速度”设置：优雅档慢半拍、更柔和、收尾更稳；迅速档保持干脆但不生硬。
+    val filterMotion = remember(animationSpeed) {
+        when (animationSpeed) {
+            ThemePreferences.AnimationSpeed.ELEGANT -> FilterPanelMotion(
+                panelDamping = 0.92f,
+                panelStiffness = 210f,
+                enterFadeDamping = 0.94f,
+                enterFadeStiffness = 230f,
+                enterExpandDamping = 0.92f,
+                enterExpandStiffness = 220f,
+                exitFadeDuration = 240,
+                exitShrinkDuration = 260,
+                dividerEnterDuration = 210,
+                dividerExitDuration = 180
+            )
+            ThemePreferences.AnimationSpeed.STANDARD -> FilterPanelMotion(
+                panelDamping = 0.88f,
+                panelStiffness = 300f,
+                enterFadeDamping = 0.90f,
+                enterFadeStiffness = 320f,
+                enterExpandDamping = 0.88f,
+                enterExpandStiffness = 300f,
+                exitFadeDuration = 190,
+                exitShrinkDuration = 210,
+                dividerEnterDuration = 160,
+                dividerExitDuration = 130
+            )
+            ThemePreferences.AnimationSpeed.SWIFT -> FilterPanelMotion(
+                panelDamping = 0.88f,
+                panelStiffness = 420f,
+                enterFadeDamping = 0.90f,
+                enterFadeStiffness = 420f,
+                enterExpandDamping = 0.88f,
+                enterExpandStiffness = 400f,
+                exitFadeDuration = 145,
+                exitShrinkDuration = 160,
+                dividerEnterDuration = 120,
+                dividerExitDuration = 100
+            )
+        }
+    }
+
+    val panelSizeSpec = spring<IntSize>(
+        dampingRatio = filterMotion.panelDamping,
+        stiffness = filterMotion.panelStiffness
+    )
+    val filterEnter = fadeIn(
+        animationSpec = spring(
+            dampingRatio = filterMotion.enterFadeDamping,
+            stiffness = filterMotion.enterFadeStiffness
+        )
+    ) + expandVertically(
+        expandFrom = Alignment.Top,
+        animationSpec = spring(
+            dampingRatio = filterMotion.enterExpandDamping,
+            stiffness = filterMotion.enterExpandStiffness
+        )
+    )
+    val filterExit = fadeOut(
+        animationSpec = tween(durationMillis = filterMotion.exitFadeDuration, easing = MotionEasing.Exit)
+    ) + shrinkVertically(
+        shrinkTowards = Alignment.Top,
+        animationSpec = tween(durationMillis = filterMotion.exitShrinkDuration, easing = MotionEasing.Exit)
+    )
+    val dividerEnter = fadeIn(animationSpec = tween(durationMillis = filterMotion.dividerEnterDuration, easing = MotionEasing.Smooth))
+    val dividerExit = fadeOut(animationSpec = tween(durationMillis = filterMotion.dividerExitDuration, easing = MotionEasing.Exit))
 
     Surface(
         modifier = Modifier
@@ -481,13 +599,14 @@ fun FilterPanel(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
+                .animateContentSize(animationSpec = panelSizeSpec)
                 .padding(Spacing.L),
             verticalArrangement = Arrangement.spacedBy(Spacing.M)
         ) {
                 AnimatedVisibility(
                     visible = showSearch,
-                    enter = EnterTransitions.FadeInExpand,
-                    exit = ExitTransitions.FadeOutShrink
+                    enter = filterEnter,
+                    exit = filterExit
                 ) {
                     Column {
                         TextField(
@@ -548,7 +667,11 @@ fun FilterPanel(
                     }
                 }
 
-                if (showSearch && showMood) {
+                AnimatedVisibility(
+                    visible = showSearch && showMood,
+                    enter = dividerEnter,
+                    exit = dividerExit
+                ) {
                     HorizontalDivider(
                         modifier = Modifier.padding(horizontal = Spacing.S),
                         color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.22f)
@@ -557,8 +680,8 @@ fun FilterPanel(
 
                 AnimatedVisibility(
                     visible = showMood,
-                    enter = EnterTransitions.FadeInExpand,
-                    exit = ExitTransitions.FadeOutShrink
+                    enter = filterEnter,
+                    exit = filterExit
                 ) {
                     Column(
                         modifier = Modifier.fillMaxWidth(),
@@ -577,45 +700,43 @@ fun FilterPanel(
                         ) {
                             moods.forEach { (moodKey, moodLabel) ->
                                 val isSelected = selectedMood == moodKey
+                                val moodBaseColor = moodColor(moodKey)
+                                val chipContainerColor by animateColorAsState(
+                                    targetValue = if (isSelected) {
+                                        moodBaseColor
+                                    } else {
+                                        moodBaseColor.copy(alpha = if (isDark) 0.34f else 0.18f)
+                                    },
+                                    animationSpec = tween(Motion.Fast, easing = MotionEasing.Smooth),
+                                    label = "mood_chip_container_$moodKey"
+                                )
+                                val chipBorderWidth by animateDpAsState(
+                                    targetValue = if (isSelected) 2.dp else 1.dp,
+                                    animationSpec = tween(Motion.Fast, easing = MotionEasing.Smooth),
+                                    label = "mood_chip_border_width_$moodKey"
+                                )
+                                val chipBorderColor by animateColorAsState(
+                                    targetValue = if (isSelected) {
+                                        contentColorFor(moodBaseColor).copy(alpha = 0.78f)
+                                    } else {
+                                        moodBaseColor.copy(alpha = if (isDark) 0.46f else 0.28f)
+                                    },
+                                    animationSpec = tween(Motion.Fast, easing = MotionEasing.Smooth),
+                                    label = "mood_chip_border_$moodKey"
+                                )
                                 Surface(
                                     modifier = Modifier.bounceClick {
                                         onMoodSelected(if (isSelected) null else moodKey)
                                     },
                                     shape = RoundedCornerShape(20.dp),
-                                    color = when (moodKey) {
-                                        "happy" -> if (isSelected) MoodColors.happy else MoodColors.happy.copy(alpha = 0.15f)
-                                        "calm" -> if (isSelected) MoodColors.calm else MoodColors.calm.copy(alpha = 0.15f)
-                                        "excited" -> if (isSelected) MoodColors.excited else MoodColors.excited.copy(alpha = 0.15f)
-                                        "sad" -> if (isSelected) MoodColors.sad else MoodColors.sad.copy(alpha = 0.15f)
-                                        "neutral" -> if (isSelected) MoodColors.neutral else MoodColors.neutral.copy(alpha = 0.15f)
-                                        else -> MaterialTheme.colorScheme.surfaceVariant
-                                    },
-                                    border = if (isSelected) BorderStroke(
-                                        2.dp,
-                                        when (moodKey) {
-                                            "happy" -> MoodColors.happy
-                                            "calm" -> MoodColors.calm
-                                            "excited" -> MoodColors.excited
-                                            "sad" -> MoodColors.sad
-                                            "neutral" -> MoodColors.neutral
-                                            else -> MaterialTheme.colorScheme.primary
-                                        }
-                                    ) else null
+                                    color = chipContainerColor,
+                                    border = BorderStroke(chipBorderWidth, chipBorderColor)
                                 ) {
                                     Text(
                                         text = moodLabel,
                                         style = MaterialTheme.typography.bodyMedium,
                                         color = if (isSelected) {
-                                            contentColorFor(
-                                                when (moodKey) {
-                                                    "happy" -> MoodColors.happy
-                                                    "calm" -> MoodColors.calm
-                                                    "excited" -> MoodColors.excited
-                                                    "sad" -> MoodColors.sad
-                                                    "neutral" -> MoodColors.neutral
-                                                    else -> MaterialTheme.colorScheme.surfaceVariant
-                                                }
-                                            )
+                                            contentColorFor(moodColor(moodKey))
                                         } else MaterialTheme.colorScheme.onSurfaceVariant,
                                         modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
                                     )
@@ -625,7 +746,11 @@ fun FilterPanel(
                     }
                 }
 
-                if (showMood && showGroup) {
+                AnimatedVisibility(
+                    visible = showMood && showGroup,
+                    enter = dividerEnter,
+                    exit = dividerExit
+                ) {
                     HorizontalDivider(
                         modifier = Modifier.padding(horizontal = Spacing.S),
                         color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.22f)
@@ -634,8 +759,8 @@ fun FilterPanel(
 
                 AnimatedVisibility(
                     visible = showGroup,
-                    enter = EnterTransitions.FadeInExpand,
-                    exit = ExitTransitions.FadeOutShrink
+                    enter = filterEnter,
+                    exit = filterExit
                 ) {
                     Column(
                         modifier = Modifier.fillMaxWidth(),
