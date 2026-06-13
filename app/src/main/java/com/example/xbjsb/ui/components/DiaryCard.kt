@@ -187,7 +187,7 @@ fun DiaryCard(
                 Text(
                     text = entry.content,
                     style = MaterialTheme.typography.bodyMedium.copy(
-                        lineHeight = 22.sp,
+                        lineHeight = 24.sp,
                         fontSize = 15.sp
                     ),
                     color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
@@ -209,7 +209,7 @@ fun DiaryCard(
                             modifier = Modifier
                                 .size(64.dp)
                                 .clip(RoundedCornerShape(8.dp))
-                                .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f))
+                                .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.28f))
                         ) {
                             AsyncImage(
                                 model = ImageRequest.Builder(context)
@@ -227,7 +227,7 @@ fun DiaryCard(
                             modifier = Modifier
                                 .size(64.dp)
                                 .clip(RoundedCornerShape(8.dp))
-                                .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)),
+                                .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.42f)),
                             contentAlignment = Alignment.Center
                         ) {
                             Text(
@@ -279,7 +279,7 @@ fun DiaryCard(
                     // 分组
                     if (entry.group.isNotBlank()) {
                         Surface(
-                            shape = RoundedCornerShape(13.dp),
+                            shape = RoundedCornerShape(14.dp),
                             color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.34f)
                         ) {
                             Row(
@@ -314,7 +314,7 @@ fun DiaryCard(
                         val tagList = entry.getTagList()
                         tagList.take(2).forEach { tag ->
                             Surface(
-                                shape = RoundedCornerShape(13.dp),
+                                shape = RoundedCornerShape(14.dp),
                                 color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.32f)
                             ) {
                                 Row(
@@ -345,7 +345,7 @@ fun DiaryCard(
                         }
                         if (tagList.size > 2) {
                             Surface(
-                                shape = RoundedCornerShape(13.dp),
+                                shape = RoundedCornerShape(14.dp),
                                 color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.22f)
                             ) {
                                 Text(
@@ -364,7 +364,7 @@ fun DiaryCard(
                     // 心情标签
                     val isDark = MaterialTheme.colorScheme.background.luminance() < 0.5f
                     Surface(
-                        shape = RoundedCornerShape(13.dp),
+                        shape = RoundedCornerShape(14.dp),
                         color = when (entry.mood) {
                             "happy" -> if (isDark) MoodColors.happyDark else MoodColors.happy
                             "calm" -> if (isDark) MoodColors.calmDark else MoodColors.calm
@@ -457,7 +457,7 @@ fun TagChip(tag: String) {
         color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.3f)
     ) {
         Row(
-            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+            modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(4.dp)
         ) {

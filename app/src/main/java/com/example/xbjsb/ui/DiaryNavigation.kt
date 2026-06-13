@@ -13,6 +13,8 @@ import com.example.xbjsb.ui.screens.DiaryListScreen
 import com.example.xbjsb.ui.screens.CalendarScreen
 import com.example.xbjsb.ui.screens.MoodStatsScreen
 import com.example.xbjsb.ui.screens.TagManagerScreen
+import com.example.xbjsb.ui.screens.RecycleBinScreen
+import com.example.xbjsb.ui.screens.PrivateSpaceScreen
 import com.example.xbjsb.ui.theme.PageTransitions
 
 sealed class Screen(val route: String) {
@@ -26,6 +28,8 @@ sealed class Screen(val route: String) {
     object Calendar : Screen("calendar")
     object MoodStats : Screen("mood_stats")
     object TagManager : Screen("tag_manager")
+    object RecycleBin : Screen("recycle_bin")
+    object PrivateSpace : Screen("private_space")
 }
 
 @Composable
@@ -57,6 +61,12 @@ fun DiaryNavigation(
                 },
                 onNavigateToTags = {
                     navController.navigate(Screen.TagManager.route)
+                },
+                onNavigateToRecycleBin = {
+                    navController.navigate(Screen.RecycleBin.route)
+                },
+                onNavigateToPrivateSpace = {
+                    navController.navigate(Screen.PrivateSpace.route)
                 }
             )
         }
@@ -67,8 +77,8 @@ fun DiaryNavigation(
                 onNavigateBack = {
                     navController.popBackStack()
                 },
-                onDateClick = { date ->
-                    navController.popBackStack()
+                onNavigateToDetail = { entryId ->
+                    navController.navigate(Screen.Detail.createRoute(entryId))
                 }
             )
         }
@@ -91,6 +101,31 @@ fun DiaryNavigation(
                 onTagClick = { tag ->
                     navController.popBackStack()
                 }
+            )
+        }
+        
+        // Recycle Bin Screen
+        composable(Screen.RecycleBin.route) {
+            RecycleBinScreen(
+                onNavigateBack = {
+                    navController.popBackStack()
+                },
+                onNavigateHome = {
+                    val popped = navController.popBackStack(Screen.List.route, inclusive = false)
+                    if (!popped) {
+                        navController.navigate(Screen.List.route) {
+                            launchSingleTop = true
+                        }
+                    }
+                }
+            )
+        }
+        
+        // Private Space Screen
+        composable(Screen.PrivateSpace.route) {
+            PrivateSpaceScreen(
+                onNavigateBack = { navController.popBackStack() },
+                onNavigateToDetail = { entryId -> navController.navigate(Screen.Detail.createRoute(entryId)) }
             )
         }
         

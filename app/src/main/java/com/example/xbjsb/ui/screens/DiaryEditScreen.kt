@@ -1,9 +1,14 @@
 package com.example.xbjsb.ui.screens
 
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -41,6 +46,7 @@ import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.CalendarToday
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
@@ -49,6 +55,8 @@ import androidx.compose.material.icons.filled.FavoriteBorder
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.Label
+import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.LockOpen
 import androidx.compose.material.icons.filled.Mood
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ButtonDefaults
@@ -64,6 +72,8 @@ import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -88,12 +98,14 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import android.net.Uri
+import android.widget.Toast
 import androidx.lifecycle.viewmodel.compose.viewModel
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
@@ -107,13 +119,18 @@ import com.example.xbjsb.data.AiPreferences
 import com.example.xbjsb.ui.components.EnhancedSnackbarHost
 import com.example.xbjsb.data.DiaryEntry
 import com.example.xbjsb.data.ThemePreferences
+import com.example.xbjsb.data.security.SecurityPreferences
 import com.example.xbjsb.ui.components.ApplyFrostedDialogWindow
+import com.example.xbjsb.ui.components.AppMessageType
+import com.example.xbjsb.ui.components.LocalAppMessageHostState
 import com.example.xbjsb.ui.components.MoodChip
+import com.example.xbjsb.ui.components.AiAssistantMenuDialog
 import com.example.xbjsb.ui.components.frostedTopAppBarColors
 import com.example.xbjsb.ui.theme.EnterTransitions
 import com.example.xbjsb.ui.theme.ExitTransitions
 import com.example.xbjsb.ui.theme.IconSize
 import com.example.xbjsb.ui.theme.Motion
+import com.example.xbjsb.ui.theme.MotionEasing
 import com.example.xbjsb.ui.theme.Spacing
 import com.example.xbjsb.viewmodel.DiaryViewModel
 import kotlinx.coroutines.launch
@@ -131,6 +148,7 @@ fun DiaryEditScreen(
     var tags by remember { mutableStateOf("") }
     var tagInput by remember { mutableStateOf("") }
     var isFavorite by remember { mutableStateOf(false) }
+    var isPrivate by remember { mutableStateOf(false) }
     var group by remember { mutableStateOf("") }
     var groupInput by remember { mutableStateOf("") }
     var images by remember { mutableStateOf("") }
@@ -139,19 +157,26 @@ fun DiaryEditScreen(
     var showMoodPicker by remember { mutableStateOf(false) }
     var showTagInput by remember { mutableStateOf(false) }
     var showDiscardDialog by remember { mutableStateOf(false) }
+    var showDraftRestoreDialog by remember { mutableStateOf(false) }
     var showGroupPicker by remember { mutableStateOf(false) }
+    var showImagePicker by remember { mutableStateOf(false) }
     var showQaComposer by remember { mutableStateOf(false) }
-    var showMoreAiActions by remember { mutableStateOf(false) }
+    var showAiAssistantMenu by remember { mutableStateOf(false) }
     var isGeneratingDiary by remember { mutableStateOf(false) }
+    var skipDraftSave by remember { mutableStateOf(false) }
+    var isSaving by remember { mutableStateOf(false) }
 
     val isEditing = entryId != null && entryId > 0
-    val canSave = title.isNotBlank() && content.isNotBlank()
+    val canSave = title.isNotBlank() && content.isNotBlank() && !isSaving
     val snackbarHostState = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
+    val messageHost = LocalAppMessageHostState.current
     val aiPreferences = remember { AiPreferences(context) }
     val themePreferences = remember { ThemePreferences(context) }
+    val securityPreferences = remember { SecurityPreferences(context) }
     val frostedBlurEnabled by themePreferences.frostedBlurEnabledFlow.collectAsState(initial = false)
+    val securityConfig by securityPreferences.configFlow.collectAsState(initial = com.example.xbjsb.data.security.SecurityConfig())
     val aiConfig by aiPreferences.configFlow.collectAsState(initial = AiPreferences.AiConfig())
     val diaryAiService = remember { OpenAiCompatibleDiaryService() }
     
@@ -179,15 +204,16 @@ fun DiaryEditScreen(
                     currentImages.add(imagePath)
                     images = currentImages.joinToString(",")
                     
-                    snackbarHostState.showSnackbar("已添加图片")
+                    messageHost?.show("已添加图片", AppMessageType.Success)
                 } catch (e: Exception) {
-                    snackbarHostState.showSnackbar("图片添加失败：${e.message}")
+                    messageHost?.show("图片添加失败：${e.message}", AppMessageType.Error)
                 }
             }
         }
     }
     
     val hasDraft by viewModel.hasDraft.collectAsState()
+    val privateGroups by viewModel.privateGroups.collectAsState()
     val allEntries by viewModel.allEntries.collectAsState()
     val usedTags = remember(allEntries) {
         allEntries
@@ -203,6 +229,7 @@ fun DiaryEditScreen(
     }
 
     LaunchedEffect(entryId) {
+        skipDraftSave = false
         if (isEditing) {
             val entry = viewModel.getEntryById(entryId!!)
             entry?.let {
@@ -211,39 +238,63 @@ fun DiaryEditScreen(
                 mood = it.mood
                 tags = it.tags
                 isFavorite = it.isFavorite
+                isPrivate = it.isPrivate
                 group = it.group
                 images = it.images
                 originalTimestamp = it.timestamp
             }
         } else if (hasDraft) {
-            // 恢复草稿
-            val draft = viewModel.restoreDraft()
-            title = draft.title
-            content = draft.content
-            mood = draft.mood ?: "neutral"
-            tags = draft.tags.joinToString(",")
+            showDraftRestoreDialog = true
+        } else {
+            // 新建日记且没有草稿时，显式清空状态，避免 Compose 复用导致上次内容残留
+            title = ""
+            content = ""
+            mood = "neutral"
+            tags = ""
+            tagInput = ""
+            isFavorite = false
+            isPrivate = false
+            group = ""
+            groupInput = ""
+            images = ""
+            originalTimestamp = null
         }
         isLoading = false
     }
     
     // 自动保存草稿
-    LaunchedEffect(title, content, mood, tags) {
-        if (!isEditing && (title.isNotBlank() || content.isNotBlank())) {
+    LaunchedEffect(title, content, mood, tags, group, images, isPrivate, skipDraftSave) {
+        if (!skipDraftSave && !isEditing && (title.isNotBlank() || content.isNotBlank() || tags.isNotBlank() || group.isNotBlank() || images.isNotBlank())) {
             kotlinx.coroutines.delay(1000) // 1秒防抖
+            if (skipDraftSave) return@LaunchedEffect
             viewModel.saveDraft(
                 title = title,
                 content = content,
                 mood = mood,
-                tags = tags.split(',').filter { it.isNotBlank() }
+                tags = tags.split(',').filter { it.isNotBlank() },
+                group = group,
+                images = images,
+                isPrivate = isPrivate
             )
         }
     }
 
-    fun saveEntry() {
-        if (!canSave) {
-            scope.launch { snackbarHostState.showSnackbar("请填写标题和内容") }
+    fun togglePrivateSetting(target: Boolean = !isPrivate) {
+        if (target && !securityConfig.isEnabled) {
+            scope.launch { messageHost?.show("请先到设置页设置隐私密码", AppMessageType.Warning) }
             return
         }
+        isPrivate = target
+    }
+
+    fun saveEntry() {
+        if (isSaving) return
+        if (title.isBlank() || content.isBlank()) {
+            scope.launch { messageHost?.show("请填写标题和内容", AppMessageType.Warning) }
+            return
+        }
+        skipDraftSave = true
+        isSaving = true
         val entry = DiaryEntry(
             id = entryId ?: System.currentTimeMillis(),
             title = title.trim(),
@@ -253,11 +304,36 @@ fun DiaryEditScreen(
             tags = tags,
             isFavorite = isFavorite,
             group = group,
-            images = images
+            images = images,
+            isPrivate = isPrivate
         )
-        if (isEditing) viewModel.updateEntry(entry) else viewModel.insertEntry(entry)
-        viewModel.clearDraft() // 保存后清除草稿
-        onNavigateBack()
+        scope.launch {
+            try {
+                if (isEditing) viewModel.updateEntry(entry) else viewModel.insertEntry(entry)
+                viewModel.clearDraft() // 保存后清除草稿
+                messageHost?.show(
+                    if (entry.isPrivate) "已保存到私密空间" else if (isEditing) "日记已更新" else "日记已保存",
+                    if (entry.isPrivate) AppMessageType.Private else AppMessageType.Success
+                )
+                title = ""
+                content = ""
+                mood = "neutral"
+                tags = ""
+                tagInput = ""
+                isFavorite = false
+                isPrivate = false
+                group = ""
+                groupInput = ""
+                images = ""
+                originalTimestamp = null
+                onNavigateBack()
+            } catch (e: Exception) {
+                skipDraftSave = false
+                messageHost?.show("保存失败，请重试", AppMessageType.Error)
+            } finally {
+                isSaving = false
+            }
+        }
     }
 
     Scaffold(
@@ -285,10 +361,12 @@ fun DiaryEditScreen(
                     Surface(
                         modifier = Modifier
                             .padding(end = 8.dp)
-                            .height(44.dp),
-                        shape = RoundedCornerShape(14.dp),
-                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = if (isSystemInDarkTheme()) 0.18f else 0.20f),
-                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.18f))
+                            .height(34.dp),
+                        shape = RoundedCornerShape(16.dp),
+                        color = MaterialTheme.colorScheme.surface.copy(alpha = if (isSystemInDarkTheme()) 0.92f else 0.96f),
+                        tonalElevation = 2.dp,
+                        shadowElevation = 2.dp,
+                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.24f))
                     ) {
                         Row(
                             modifier = Modifier.padding(4.dp),
@@ -316,7 +394,7 @@ fun DiaryEditScreen(
                             FilledTonalButton(
                                 onClick = { saveEntry() },
                                 enabled = canSave,
-                                modifier = Modifier.height(36.dp),
+                                modifier = Modifier.height(34.dp),
                                 shape = RoundedCornerShape(14.dp),
                                 contentPadding = PaddingValues(horizontal = 13.dp, vertical = 0.dp),
                                 colors = ButtonDefaults.filledTonalButtonColors(
@@ -363,18 +441,19 @@ fun DiaryEditScreen(
                         InlineAiWritingBar(
                             hasContent = content.isNotBlank(),
                             isLoading = isGeneratingDiary,
-                            showMore = showMoreAiActions,
-                            onToggleMore = { showMoreAiActions = !showMoreAiActions },
-                            onQaCompose = {
-                                if (!isGeneratingDiary) showQaComposer = true
+                            onShowAiAssistant = {
+                                if (!isGeneratingDiary) showAiAssistantMenu = true
                             },
                             onAction = { action ->
                                 when {
                                     !aiConfig.isConfigured -> {
-                                        scope.launch { snackbarHostState.showSnackbar("请先到设置页配置 AI 模型和 API Key") }
+                                        scope.launch { messageHost?.show("请先到设置页配置 AI 模型和 API Key", AppMessageType.Warning) }
                                     }
-                                    content.isBlank() -> {
-                                        scope.launch { snackbarHostState.showSnackbar("请先写一点正文，再使用${action.shortName}") }
+                                    action != DiaryAiAction.QUICK_GENERATE && content.isBlank() -> {
+                                        scope.launch { messageHost?.show("请先写一点正文，再使用${action.shortName}", AppMessageType.Warning) }
+                                    }
+                                    action == DiaryAiAction.QUICK_GENERATE && content.isBlank() -> {
+                                        scope.launch { messageHost?.show("请先输入关键词或简单描述", AppMessageType.Warning) }
                                     }
                                     else -> {
                                         isGeneratingDiary = true
@@ -397,6 +476,14 @@ fun DiaryEditScreen(
                                             )
                                             result.onSuccess { generated ->
                                                 when (action) {
+                                                    DiaryAiAction.QUICK_GENERATE -> {
+                                                        if (generated.content.isNotBlank()) content = generated.content
+                                                        if (generated.title.isNotBlank()) title = generated.title
+                                                        mood = generated.mood
+                                                        if (generated.tags.isNotEmpty()) tags = generated.tags.joinToString(",")
+                                                        if (generated.group.isNotBlank()) group = generated.group
+                                                        messageHost?.show("已生成完整日记", AppMessageType.Success)
+                                                    }
                                                     DiaryAiAction.EXPAND,
                                                     DiaryAiAction.SHORTEN,
                                                     DiaryAiAction.POLISH,
@@ -406,24 +493,24 @@ fun DiaryEditScreen(
                                                         mood = generated.mood
                                                         if (generated.tags.isNotEmpty()) tags = generated.tags.joinToString(",")
                                                         if (generated.group.isNotBlank()) group = generated.group
-                                                        snackbarHostState.showSnackbar("已完成${action.shortName}")
+                                                        messageHost?.show("已完成${action.shortName}", AppMessageType.Success)
                                                     }
                                                     DiaryAiAction.GENERATE_TITLE -> {
                                                         if (generated.title.isNotBlank()) title = generated.title
-                                                        snackbarHostState.showSnackbar("已生成标题")
+                                                        messageHost?.show("已生成标题", AppMessageType.Success)
                                                     }
                                                     DiaryAiAction.SUMMARIZE_EMOTION -> {
                                                         mood = generated.mood
-                                                        snackbarHostState.showSnackbar(generated.summary.ifBlank { "已总结情绪" })
+                                                        messageHost?.show(generated.summary.ifBlank { "已分析情绪" }, AppMessageType.Success)
                                                     }
                                                     DiaryAiAction.RECOMMEND_TAGS_GROUP -> {
                                                         if (generated.tags.isNotEmpty()) tags = generated.tags.joinToString(",")
                                                         if (generated.group.isNotBlank()) group = generated.group
-                                                        snackbarHostState.showSnackbar("已推荐标签和分组")
+                                                        messageHost?.show("已推荐标签和分组", AppMessageType.Success)
                                                     }
                                                 }
                                             }.onFailure { error ->
-                                                snackbarHostState.showSnackbar(error.message ?: "AI 生成失败")
+                                                messageHost?.show(error.message ?: "AI 生成失败", AppMessageType.Error)
                                             }
                                             isGeneratingDiary = false
                                         }
@@ -434,45 +521,35 @@ fun DiaryEditScreen(
                     }
                 )
 
-                SettingRow(
-                    leadingIcon = { Icon(Icons.Filled.Mood, contentDescription = null, modifier = Modifier.size(IconSize.Medium), tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.76f)) },
-                    title = "心情",
-                    trailing = {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text(
-                                text = moodLabel(mood),
-                                style = MaterialTheme.typography.labelLarge,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                            Spacer(modifier = Modifier.width(Spacing.S))
-                            Icon(Icons.Filled.ExpandMore, contentDescription = null, modifier = Modifier.size(IconSize.Small))
-                        }
-                    },
-                    onClick = { showMoodPicker = !showMoodPicker }
-                )
-
-                AnimatedVisibility(
-                    visible = showMoodPicker,
-                    enter = EnterTransitions.FadeInExpand,
-                    exit = ExitTransitions.FadeOutShrink
-                ) {
-                    MoodPicker(
-                        selectedMood = mood,
-                        onMoodSelected = {
-                            mood = it
-                            showMoodPicker = false
-                        }
-                    )
-                }
-
-                TagWorkspace(
+                EditorMetaCard(
+                    mood = mood,
                     tags = tags,
-                    expanded = showTagInput,
-                    onToggleExpanded = { showTagInput = !showTagInput },
+                    group = group,
+                    isPrivate = isPrivate,
+                    imageCount = images.split(',').count { it.isNotBlank() },
+                    showMoodPicker = showMoodPicker,
+                    showTagInput = showTagInput,
+                    showGroupPicker = showGroupPicker,
+                    showImagePicker = showImagePicker,
+                    onToggleMood = { showMoodPicker = !showMoodPicker },
+                    onToggleTags = { showTagInput = !showTagInput },
+                    onToggleGroup = { showGroupPicker = !showGroupPicker },
+                    onTogglePrivate = { togglePrivateSetting() },
+                    onPrivateChange = { togglePrivateSetting(it) },
+                    onToggleImages = { showImagePicker = !showImagePicker },
                     onRemoveTag = { tag ->
                         tags = tags.split(',').filter { it.isNotBlank() && it != tag }.joinToString(",")
                     },
-                    editor = {
+                    moodContent = {
+                        MoodPicker(
+                            selectedMood = mood,
+                            onMoodSelected = {
+                                mood = it
+                                showMoodPicker = false
+                            }
+                        )
+                    },
+                    tagContent = {
                         TagEditor(
                             tags = tags,
                             tagInput = tagInput,
@@ -494,18 +571,13 @@ fun DiaryEditScreen(
                                 tagInput = ""
                             }
                         )
-                    }
-                )
-
-                GroupWorkspace(
-                    group = group,
-                    expanded = showGroupPicker,
-                    onToggleExpanded = { showGroupPicker = !showGroupPicker },
-                    editor = {
+                    },
+                    groupContent = {
                         GroupPickerPanel(
                             currentGroup = group,
                             groupInput = groupInput,
                             existingGroups = usedGroups,
+                            privateGroups = privateGroups,
                             onGroupInputChange = { groupInput = it },
                             onUseGroup = {
                                 val newGroup = groupInput.trim()
@@ -524,115 +596,173 @@ fun DiaryEditScreen(
                                 group = ""
                                 groupInput = ""
                                 showGroupPicker = false
-                            }
-                        )
-                    }
-                )
-                
-                // 图片附件
-                var showImagePicker by remember { mutableStateOf(false) }
-                SettingRow(
-                    leadingIcon = { Icon(Icons.Filled.Image, contentDescription = null, modifier = Modifier.size(IconSize.Medium), tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.76f)) },
-                    title = "图片",
-                    trailing = {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text(
-                                text = if (images.isBlank()) "添加" else "${images.split(',').filter { it.isNotBlank() }.size} 张",
-                                modifier = Modifier.widthIn(max = 120.dp),
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                                style = MaterialTheme.typography.labelLarge,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                            Spacer(modifier = Modifier.width(Spacing.S))
-                            Icon(Icons.Filled.Add, contentDescription = null, modifier = Modifier.size(IconSize.Small))
-                        }
-                    },
-                    onClick = { showImagePicker = !showImagePicker }
-                )
-                
-                AnimatedVisibility(
-                    visible = showImagePicker,
-                    enter = EnterTransitions.FadeInExpand,
-                    exit = ExitTransitions.FadeOutShrink
-                ) {
-                    PropertyPanel {
-                        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                        // 图片预览网格
-                        if (images.isNotBlank()) {
-                            val imageList = images.split(',').filter { it.isNotBlank() }
-                            FlowRow(
-                                horizontalArrangement = Arrangement.spacedBy(Spacing.S),
-                                verticalArrangement = Arrangement.spacedBy(Spacing.S)
-                            ) {
-                                imageList.forEach { imagePath ->
-                                    ImagePreviewItem(
-                                        imagePath = imagePath,
-                                        onRemove = {
-                                            // 先删除文件
-                                            try {
-                                                val file = java.io.File(imagePath)
-                                                if (file.exists() && file.isFile) {
-                                                    file.delete()
-                                                }
-                                            } catch (e: Exception) {
-                                                e.printStackTrace()
-                                            }
-                                            // 再从字符串移除
-                                            images = images.split(',')
-                                                .filter { it.isNotBlank() && it != imagePath }
-                                                .joinToString(",")
-                                        }
+                            },
+                            onToggleGroupPrivate = { targetGroup ->
+                                viewModel.toggleGroupPrivate(targetGroup)
+                                scope.launch {
+                                    snackbarHostState.showSnackbar(
+                                        if (targetGroup in privateGroups) "已取消私密分组" else "已设为私密分组"
                                     )
                                 }
                             }
-                            Spacer(Modifier.height(Spacing.M))
-                        }
-                        
-                        // 添加图片按钮
-                        TextButton(
-                            onClick = {
-                                imagePickerLauncher.launch("image/*")
-                            },
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Row(
-                                horizontalArrangement = Arrangement.Center,
-                                verticalAlignment = Alignment.CenterVertically,
-                                modifier = Modifier.padding(vertical = 4.dp)
+                        )
+                    },
+                    imageContent = {
+                        PropertyPanel {
+                            Column(
+                                modifier = Modifier.padding(16.dp),
+                                verticalArrangement = Arrangement.spacedBy(10.dp)
                             ) {
-                                Icon(
-                                    Icons.Filled.Add,
-                                    contentDescription = null,
-                                    modifier = Modifier.size(20.dp)
-                                )
-                                Spacer(Modifier.width(8.dp))
-                                Text("添加图片")
-                            }
-                        }
-                        
-                        if (images.isNotBlank()) {
-                            Spacer(Modifier.height(Spacing.S))
-                            TextButton(
-                                onClick = {
-                                    images = ""
-                                    showImagePicker = false
-                                },
-                                modifier = Modifier.fillMaxWidth()
-                            ) {
-                                Text("清除全部图片")
+                                if (images.isNotBlank()) {
+                                    val imageList = images.split(',').filter { it.isNotBlank() }
+                                    FlowRow(
+                                        horizontalArrangement = Arrangement.spacedBy(Spacing.S),
+                                        verticalArrangement = Arrangement.spacedBy(Spacing.S)
+                                    ) {
+                                        imageList.forEach { imagePath ->
+                                            ImagePreviewItem(
+                                                imagePath = imagePath,
+                                                onRemove = {
+                                                    try {
+                                                        val file = java.io.File(imagePath)
+                                                        if (file.exists() && file.isFile) file.delete()
+                                                    } catch (e: Exception) {
+                                                        e.printStackTrace()
+                                                    }
+                                                    images = images.split(',')
+                                                        .filter { it.isNotBlank() && it != imagePath }
+                                                        .joinToString(",")
+                                                }
+                                            )
+                                        }
+                                    }
+                                    Spacer(Modifier.height(Spacing.M))
+                                }
+
+                                TextButton(
+                                    onClick = { imagePickerLauncher.launch("image/*") },
+                                    modifier = Modifier.fillMaxWidth(),
+                                    shape = RoundedCornerShape(14.dp)
+                                ) {
+                                    Row(
+                                        horizontalArrangement = Arrangement.Center,
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        modifier = Modifier.padding(vertical = 4.dp)
+                                    ) {
+                                        Icon(Icons.Filled.Add, contentDescription = null, modifier = Modifier.size(20.dp))
+                                        Spacer(Modifier.width(8.dp))
+                                        Text("添加图片")
+                                    }
+                                }
+
+                                if (images.isNotBlank()) {
+                                    TextButton(
+                                        onClick = {
+                                            images = ""
+                                            showImagePicker = false
+                                        },
+                                        modifier = Modifier.fillMaxWidth(),
+                                        shape = RoundedCornerShape(14.dp)
+                                    ) {
+                                        Text("清除全部图片")
+                                    }
+                                }
                             }
                         }
                     }
-                    }
-                }
+                )
 
                 Spacer(modifier = Modifier.height(Spacing.XXL))
             }
         }
-    }
+        }
+        
+        if (showAiAssistantMenu) {
+            AiAssistantMenuDialog(
+                hasContent = content.isNotBlank(),
+                isGenerating = isGeneratingDiary,
+                frostedBlurEnabled = frostedBlurEnabled,
+                onDismiss = { showAiAssistantMenu = false },
+                onActionSelect = { action ->
+                    when {
+                        !aiConfig.isConfigured -> {
+                            scope.launch { messageHost?.show("请先到设置页配置 AI 模型和 API Key", AppMessageType.Warning) }
+                        }
+                        action != DiaryAiAction.QUICK_GENERATE && content.isBlank() -> {
+                            scope.launch { messageHost?.show("请先写一点正文，再使用${action.shortName}", AppMessageType.Warning) }
+                        }
+                        action == DiaryAiAction.QUICK_GENERATE && content.isBlank() -> {
+                            scope.launch { messageHost?.show("请先输入关键词或简单描述", AppMessageType.Warning) }
+                        }
+                        else -> {
+                            isGeneratingDiary = true
+                            scope.launch {
+                                val dateText = java.text.SimpleDateFormat("yyyy年MM月dd日 HH:mm", java.util.Locale.CHINA)
+                                    .format(java.util.Date(originalTimestamp ?: System.currentTimeMillis()))
+                                val result = diaryAiService.processDiaryWriting(
+                                    config = aiConfig,
+                                    action = action,
+                                    generationContext = DiaryGenerationContext(
+                                        dateText = dateText,
+                                        existingTitle = title,
+                                        existingContent = content,
+                                        currentMood = mood,
+                                        currentTags = tags.split(',').filter { it.isNotBlank() },
+                                        currentGroup = group,
+                                        lengthPreference = "中，约 300-500 字",
+                                        stylePreference = "自然真实，像普通人认真写下的一篇日记"
+                                    )
+                                )
+                                result.onSuccess { generated ->
+                                    when (action) {
+                                        DiaryAiAction.QUICK_GENERATE -> {
+                                            if (generated.content.isNotBlank()) content = generated.content
+                                            if (generated.title.isNotBlank()) title = generated.title
+                                            mood = generated.mood
+                                            if (generated.tags.isNotEmpty()) tags = generated.tags.joinToString(",")
+                                            if (generated.group.isNotBlank()) group = generated.group
+                                            messageHost?.show("已生成完整日记", AppMessageType.Success)
+                                        }
+                                        DiaryAiAction.EXPAND,
+                                        DiaryAiAction.SHORTEN,
+                                        DiaryAiAction.POLISH,
+                                        DiaryAiAction.CONTINUE -> {
+                                            if (generated.content.isNotBlank()) content = generated.content
+                                            if (generated.title.isNotBlank() && title.isBlank()) title = generated.title
+                                            mood = generated.mood
+                                            if (generated.tags.isNotEmpty()) tags = generated.tags.joinToString(",")
+                                            if (generated.group.isNotBlank()) group = generated.group
+                                            messageHost?.show("已完成${action.shortName}", AppMessageType.Success)
+                                        }
+                                        DiaryAiAction.GENERATE_TITLE -> {
+                                            if (generated.title.isNotBlank()) title = generated.title
+                                            messageHost?.show("已生成标题", AppMessageType.Success)
+                                        }
+                                        DiaryAiAction.SUMMARIZE_EMOTION -> {
+                                            mood = generated.mood
+                                            messageHost?.show(generated.summary.ifBlank { "已分析情绪" }, AppMessageType.Success)
+                                        }
+                                        DiaryAiAction.RECOMMEND_TAGS_GROUP -> {
+                                            if (generated.tags.isNotEmpty()) tags = generated.tags.joinToString(",")
+                                            if (generated.group.isNotBlank()) group = generated.group
+                                            messageHost?.show("已推荐标签和分组", AppMessageType.Success)
+                                        }
+                                    }
+                                }.onFailure { error ->
+                                    messageHost?.show(error.message ?: "AI 生成失败", AppMessageType.Error)
+                                }
+                                isGeneratingDiary = false
+                            }
+                        }
+                    }
+                },
+                onQaTemplateSelect = {
+                    showQaComposer = true
+                }
+            )
+        }
 
-    if (showQaComposer) {
+        if (showQaComposer) {
         QaComposerDialog(
             isGenerating = isGeneratingDiary,
             frostedBlurEnabled = frostedBlurEnabled,
@@ -642,7 +772,7 @@ fun DiaryEditScreen(
             onGenerate = { selectedTemplate, qaAnswers ->
                 if (!aiConfig.isConfigured) {
                     scope.launch {
-                        snackbarHostState.showSnackbar("请先到设置页配置 AI 模型和 API Key")
+                        messageHost?.show("请先到设置页配置 AI 模型和 API Key", AppMessageType.Warning)
                     }
                     return@QaComposerDialog
                 }
@@ -673,12 +803,56 @@ fun DiaryEditScreen(
                         tags = generated.tags.joinToString(",")
                         group = generated.group
                         showQaComposer = false
-                        snackbarHostState.showSnackbar("已根据问答生成日记")
+                        messageHost?.show("已根据问答生成日记", AppMessageType.Success)
                     }.onFailure { error ->
-                        snackbarHostState.showSnackbar(error.message ?: "AI 生成失败")
+                        messageHost?.show(error.message ?: "AI 生成失败", AppMessageType.Error)
                     }
                     isGeneratingDiary = false
                 }
+            }
+        )
+    }
+
+    if (showDraftRestoreDialog) {
+        AlertDialog(
+            onDismissRequest = { },
+            title = {
+                ApplyFrostedDialogWindow(enabled = frostedBlurEnabled)
+                Text("发现未完成草稿")
+            },
+            text = { Text("是否恢复上次未完成的日记？放弃后会清除这份草稿。") },
+            confirmButton = {
+                TextButton(onClick = {
+                    val draft = viewModel.restoreDraft()
+                    title = draft.title
+                    content = draft.content
+                    mood = draft.mood ?: "neutral"
+                    tags = draft.tags.joinToString(",")
+                    group = draft.group
+                    images = draft.images
+                    isPrivate = draft.isPrivate
+                    isFavorite = false
+                    originalTimestamp = null
+                    showDraftRestoreDialog = false
+                }) { Text("恢复草稿") }
+            },
+            dismissButton = {
+                TextButton(onClick = {
+                    skipDraftSave = true
+                    viewModel.clearDraft()
+                    title = ""
+                    content = ""
+                    mood = "neutral"
+                    tags = ""
+                    tagInput = ""
+                    isFavorite = false
+                    isPrivate = false
+                    group = ""
+                    groupInput = ""
+                    images = ""
+                    originalTimestamp = null
+                    showDraftRestoreDialog = false
+                }) { Text("放弃草稿") }
             }
         )
     }
@@ -709,110 +883,55 @@ fun DiaryEditScreen(
 private fun InlineAiWritingBar(
     hasContent: Boolean,
     isLoading: Boolean,
-    showMore: Boolean,
-    onToggleMore: () -> Unit,
-    onQaCompose: () -> Unit,
+    onShowAiAssistant: () -> Unit,
     onAction: (DiaryAiAction) -> Unit
 ) {
-    val assistActions = listOf(
-        "续写" to DiaryAiAction.CONTINUE,
-        "标题" to DiaryAiAction.GENERATE_TITLE,
-        "扩写" to DiaryAiAction.EXPAND,
-        "缩写" to DiaryAiAction.SHORTEN,
-        "情绪" to DiaryAiAction.SUMMARIZE_EMOTION,
-        "标签" to DiaryAiAction.RECOMMEND_TAGS_GROUP
-    )
-
-    Column(
+    Row(
         modifier = Modifier.fillMaxWidth(),
-        verticalArrangement = Arrangement.spacedBy(10.dp)
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween
     ) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween
-        ) {
-            AiPromptButton(
-                isLoading = isLoading,
-                onClick = onQaCompose
+        AiAssistantButton(
+            isLoading = isLoading,
+            onClick = onShowAiAssistant
+        )
+
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            AiMiniAction(
+                text = "生成",
+                enabled = !isLoading && hasContent,
+                emphasized = true,
+                onClick = { onAction(DiaryAiAction.QUICK_GENERATE) }
             )
-
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                AiMiniAction(
-                    text = "润色",
-                    enabled = !isLoading && hasContent,
-                    emphasized = true,
-                    onClick = { onAction(DiaryAiAction.POLISH) }
-                )
-
-                AiMiniAction(
-                    text = if (showMore) "收起" else "更多",
-                    enabled = !isLoading,
-                    icon = if (showMore) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
-                    onClick = onToggleMore
-                )
-            }
-        }
-
-        AnimatedVisibility(
-            visible = showMore,
-            enter = EnterTransitions.FadeInExpand,
-            exit = ExitTransitions.FadeOutShrink
-        ) {
-            Surface(
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(14.dp),
-                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.10f),
-                tonalElevation = 0.dp,
-                border = BorderStroke(
-                    1.dp,
-                    MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.10f)
-                )
-            ) {
-                Column(
-                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    Text(
-                        text = "建议操作",
-                        style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.SemiBold),
-                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.52f)
-                    )
-                    FlowRow(
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                        verticalArrangement = Arrangement.spacedBy(6.dp)
-                    ) {
-                        assistActions.forEach { (label, action) ->
-                            AiSuggestionToken(
-                                text = label,
-                                enabled = !isLoading && hasContent,
-                                onClick = { onAction(action) }
-                            )
-                        }
-                    }
-                }
-            }
+            
+            AiMiniAction(
+                text = "润色",
+                enabled = !isLoading && hasContent,
+                emphasized = false,
+                onClick = { onAction(DiaryAiAction.POLISH) }
+            )
         }
     }
 }
 
 @Composable
-private fun AiPromptButton(
+private fun AiAssistantButton(
     modifier: Modifier = Modifier,
     isLoading: Boolean,
     onClick: () -> Unit
 ) {
     Surface(
         modifier = modifier
-            .height(36.dp)
+            .height(34.dp)
             .clip(RoundedCornerShape(14.dp))
             .clickable(enabled = !isLoading, onClick = onClick),
         shape = RoundedCornerShape(14.dp),
-        color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = if (isLoading) 0.12f else 0.20f),
-        tonalElevation = 0.dp
+        color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = if (isLoading) 0.08f else 0.13f),
+        tonalElevation = 0.dp,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = if (isLoading) 0.08f else 0.14f))
     ) {
             Row(
-                modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(7.dp)
             ) {
@@ -831,7 +950,7 @@ private fun AiPromptButton(
                     )
                 }
                 Text(
-                    text = if (isLoading) "处理中" else "AI 问答",
+                    text = if (isLoading) "处理中" else "AI 助手",
                     style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold),
                     color = MaterialTheme.colorScheme.primary.copy(alpha = 0.86f),
                     maxLines = 1,
@@ -858,11 +977,11 @@ private fun AiMiniAction(
     val content = when {
         !enabled -> MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.32f)
         emphasized -> MaterialTheme.colorScheme.primary.copy(alpha = 0.82f)
-        else -> MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.62f)
+        else -> MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.58f)
     }
     Surface(
         modifier = Modifier
-            .height(36.dp)
+            .height(34.dp)
             .clip(shape)
             .clickable(enabled = enabled, onClick = onClick),
         shape = shape,
@@ -1009,7 +1128,7 @@ private fun QaComposerDialog(
                 ) {
                     Column(
                         modifier = Modifier.padding(16.dp),
-                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
@@ -1058,7 +1177,7 @@ private fun QaComposerDialog(
                             colors = OutlinedTextFieldDefaults.colors(
                                 unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f),
                                 focusedBorderColor = qaAccent.copy(alpha = 0.58f),
-                                focusedContainerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.62f),
+                                focusedContainerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.58f),
                                 unfocusedContainerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.46f)
                             )
                         )
@@ -1150,23 +1269,19 @@ private fun EditorPaper(
     Surface(
         modifier = Modifier.fillMaxWidth(),
         shape = shape,
-        color = if (isDark) {
-            MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.22f)
-        } else {
-            MaterialTheme.colorScheme.surface
-        },
-        tonalElevation = if (isDark) 0.dp else 1.dp,
-        shadowElevation = 0.dp,
+        color = MaterialTheme.colorScheme.surface,
+        tonalElevation = 2.dp,
+        shadowElevation = if (isDark) 0.dp else 2.dp,
         border = BorderStroke(
             1.dp,
-            MaterialTheme.colorScheme.outlineVariant.copy(alpha = if (isDark) 0.14f else 0.34f)
+            MaterialTheme.colorScheme.outlineVariant.copy(alpha = if (isDark) 0.20f else 0.30f)
         )
     ) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 22.dp, vertical = 20.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
+            verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
             BasicTextField(
                 value = title,
@@ -1232,7 +1347,7 @@ private fun EditorPaper(
                     .heightIn(min = 210.dp),
                 textStyle = MaterialTheme.typography.bodyLarge.copy(
                     color = MaterialTheme.colorScheme.onSurface,
-                    lineHeight = 28.sp,
+                    lineHeight = 30.sp,
                     fontSize = 16.sp
                 ),
                 cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
@@ -1247,7 +1362,7 @@ private fun EditorPaper(
                                 text = "写下此刻的想法，或者先留一句待会儿让 AI 帮你展开...",
                                 style = MaterialTheme.typography.bodyLarge.copy(
                                     fontSize = 16.sp,
-                                    lineHeight = 28.sp
+                                    lineHeight = 30.sp
                                 ),
                                 color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = if (isDark) 0.28f else 0.34f)
                             )
@@ -1268,11 +1383,61 @@ private fun EditorPaper(
 }
 
 @Composable
+private fun MetaSectionCard(
+    title: String,
+    subtitle: String,
+    content: @Composable () -> Unit
+) {
+    val isDark = isSystemInDarkTheme()
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .animateContentSize(
+                animationSpec = spring(
+                    dampingRatio = 0.88f,
+                    stiffness = 380f
+                )
+            ),
+        shape = RoundedCornerShape(18.dp),
+        color = MaterialTheme.colorScheme.surface,
+        tonalElevation = 0.8.dp,
+        shadowElevation = if (isDark) 0.dp else 0.5.dp,
+        border = BorderStroke(
+            0.8.dp,
+            MaterialTheme.colorScheme.outlineVariant.copy(alpha = if (isDark) 0.14f else 0.20f)
+        )
+    ) {
+        Column(
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Column(
+                modifier = Modifier.padding(horizontal = 2.dp, vertical = 2.dp),
+                verticalArrangement = Arrangement.spacedBy(2.dp)
+            ) {
+                Text(
+                    text = title,
+                    style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Medium),
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.86f)
+                )
+                Text(
+                    text = subtitle,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.60f)
+                )
+            }
+            content()
+        }
+    }
+}
+
+@Composable
 private fun SettingRow(
     leadingIcon: @Composable () -> Unit,
     title: String,
     trailing: @Composable () -> Unit,
-    onClick: () -> Unit
+    onClick: () -> Unit,
+    embedded: Boolean = false
 ) {
     val isDark = isSystemInDarkTheme()
     val shape = RoundedCornerShape(18.dp)
@@ -1282,29 +1447,36 @@ private fun SettingRow(
             .clip(shape)
             .clickable(onClick = onClick),
         shape = shape,
-        color = if (isDark) {
-            MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.18f)
+        color = if (embedded) {
+            MaterialTheme.colorScheme.surface.copy(alpha = 0.0f)
         } else {
             MaterialTheme.colorScheme.surface
         },
-        tonalElevation = if (isDark) 0.dp else 1.dp,
-        shadowElevation = 0.dp,
-        border = BorderStroke(
-            1.dp,
-            MaterialTheme.colorScheme.outlineVariant.copy(alpha = if (isDark) 0.12f else 0.30f)
-        )
+        tonalElevation = if (embedded) 0.dp else 2.dp,
+        shadowElevation = if (embedded || isDark) 0.dp else 1.dp,
+        border = if (embedded) {
+            null
+        } else {
+            BorderStroke(
+                1.dp,
+                MaterialTheme.colorScheme.outlineVariant.copy(alpha = if (isDark) 0.18f else 0.28f)
+            )
+        }
     ) {
         Row(
-            modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
+            modifier = Modifier.padding(
+                horizontal = if (embedded) 4.dp else 16.dp,
+                vertical = if (embedded) 9.dp else 14.dp
+            ),
             verticalAlignment = Alignment.CenterVertically
         ) {
-Box(
-                    modifier = Modifier
-                        .size(42.dp)
-                        .clip(RoundedCornerShape(14.dp))
-                        .background(MaterialTheme.colorScheme.primaryContainer.copy(alpha = if (isDark) 0.20f else 0.32f)),
-                    contentAlignment = Alignment.Center
-                ) { leadingIcon() }
+            Box(
+                modifier = Modifier
+                    .size(if (embedded) 36.dp else 42.dp)
+                    .clip(RoundedCornerShape(14.dp))
+                    .background(MaterialTheme.colorScheme.primaryContainer.copy(alpha = if (isDark) 0.16f else 0.24f)),
+                contentAlignment = Alignment.Center
+            ) { leadingIcon() }
             Spacer(modifier = Modifier.width(14.dp))
             Text(
                 text = title,
@@ -1315,6 +1487,7 @@ Box(
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
             )
+            Spacer(modifier = Modifier.width(16.dp))
             trailing()
         }
     }
@@ -1329,16 +1502,12 @@ private fun PropertyPanel(
     Surface(
         modifier = modifier.fillMaxWidth(),
         shape = RoundedCornerShape(14.dp),
-        color = if (isDark) {
-            MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.18f)
-        } else {
-            MaterialTheme.colorScheme.surface
-        },
-        tonalElevation = if (isDark) 0.dp else 1.dp,
-        shadowElevation = 0.dp,
+        color = MaterialTheme.colorScheme.surface,
+        tonalElevation = 2.dp,
+        shadowElevation = if (isDark) 0.dp else 1.dp,
         border = BorderStroke(
             1.dp,
-            MaterialTheme.colorScheme.outlineVariant.copy(alpha = if (isDark) 0.12f else 0.28f)
+            MaterialTheme.colorScheme.outlineVariant.copy(alpha = if (isDark) 0.18f else 0.26f)
         )
     ) {
         content()
@@ -1402,29 +1571,21 @@ private fun InlineCreateBar(
     Surface(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable(
-                interactionSource = remember { MutableInteractionSource() },
-                indication = rememberRipple()
-            ) {
-                // 点击卡片空白区域时，不做任何操作（让输入框自己处理聚焦）
-            },
-        shape = RoundedCornerShape(18.dp),
-        color = if (isDark) {
-            MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.18f)
-        } else {
-            MaterialTheme.colorScheme.surface
-        },
-        tonalElevation = if (isDark) 0.dp else 1.dp,
+            .height(34.dp),
+        shape = RoundedCornerShape(9.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = if (isDark) 0.10f else 0.16f),
+        tonalElevation = 0.dp,
+        shadowElevation = 0.dp,
         border = BorderStroke(
-            1.dp,
-            MaterialTheme.colorScheme.outlineVariant.copy(alpha = if (isDark) 0.12f else 0.28f)
+            0.6.dp,
+            MaterialTheme.colorScheme.outlineVariant.copy(alpha = if (isDark) 0.06f else 0.10f)
         )
     ) {
         Row(
             modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 12.dp, vertical = 8.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                .fillMaxSize()
+                .padding(horizontal = 10.dp),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             BasicTextField(
@@ -1432,9 +1593,10 @@ private fun InlineCreateBar(
                 onValueChange = onValueChange,
                 modifier = Modifier.weight(1f),
                 singleLine = true,
-                textStyle = MaterialTheme.typography.bodyLarge.copy(
+                textStyle = MaterialTheme.typography.bodySmall.copy(
                     color = MaterialTheme.colorScheme.onSurface
                 ),
+                cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
                 keyboardActions = KeyboardActions(
                     onDone = { if (enabled) onAction() }
@@ -1443,13 +1605,13 @@ private fun InlineCreateBar(
                     Box(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(vertical = 4.dp)
+                            .padding(vertical = 3.dp)
                     ) {
                         if (value.isEmpty()) {
                             Text(
                                 text = placeholder,
-                                style = MaterialTheme.typography.bodyLarge,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.36f)
                             )
                         }
                         innerTextField()
@@ -1457,29 +1619,35 @@ private fun InlineCreateBar(
                 }
             )
 
-            FilledTonalButton(
-                onClick = onAction,
-                enabled = enabled,
-                modifier = Modifier.height(40.dp),
-                shape = RoundedCornerShape(12.dp),
-                colors = ButtonDefaults.filledTonalButtonColors(
-                    containerColor = accentContainer.copy(alpha = 0.48f),
-                    contentColor = accentContent,
-                    disabledContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.18f),
-                    disabledContentColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.38f)
-                ),
-                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 0.dp)
-            ) {
-                Icon(
-                    actionIcon,
-                    contentDescription = null,
-                    modifier = Modifier.size(18.dp)
-                )
-                Spacer(modifier = Modifier.width(6.dp))
-                Text(
-                    text = actionText,
-                    style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.SemiBold)
-                )
+            if (enabled) {
+                Surface(
+                    modifier = Modifier
+                        .height(26.dp)
+                        .clip(RoundedCornerShape(8.dp))
+                        .clickable(onClick = onAction),
+                    shape = RoundedCornerShape(8.dp),
+                    color = accentContainer.copy(alpha = 0.13f),
+                    border = BorderStroke(0.6.dp, accentContent.copy(alpha = 0.12f))
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.Center
+                    ) {
+                        Icon(
+                            actionIcon,
+                            contentDescription = null,
+                            modifier = Modifier.size(13.dp),
+                            tint = accentContent.copy(alpha = 0.82f)
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text(
+                            text = actionText,
+                            style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Medium),
+                            color = accentContent.copy(alpha = 0.86f)
+                        )
+                    }
+                }
             }
         }
     }
@@ -1491,10 +1659,12 @@ private fun GroupPickerPanel(
     currentGroup: String,
     groupInput: String,
     existingGroups: List<String>,
+    privateGroups: Set<String>,
     onGroupInputChange: (String) -> Unit,
     onUseGroup: () -> Unit,
     onSelectGroup: (String) -> Unit,
-    onClearGroup: () -> Unit
+    onClearGroup: () -> Unit,
+    onToggleGroupPrivate: (String) -> Unit
 ) {
     val query = groupInput.trim()
     val suggestions = existingGroups
@@ -1502,11 +1672,11 @@ private fun GroupPickerPanel(
         .take(12)
 
     Column(
-        verticalArrangement = Arrangement.spacedBy(12.dp)
+        verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
             InlineCreateBar(
                 value = groupInput,
-                placeholder = "搜索或新建分组",
+                placeholder = "输入分组",
                 actionText = "使用",
                 actionIcon = Icons.Filled.Check,
                 enabled = query.isNotBlank(),
@@ -1519,15 +1689,10 @@ private fun GroupPickerPanel(
             )
 
             if (suggestions.isNotEmpty()) {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text(
-                        text = if (query.isBlank()) "已创建分组" else "匹配分组",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
+                Column(verticalArrangement = Arrangement.spacedBy(7.dp)) {
                     FlowRow(
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
                         suggestions.forEach { groupName ->
                             val selected = currentGroup == groupName
@@ -1545,7 +1710,7 @@ private fun GroupPickerPanel(
                                 )
                             ) {
                                 Row(
-                                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
                                     verticalAlignment = Alignment.CenterVertically,
                                     horizontalArrangement = Arrangement.spacedBy(5.dp)
                                 ) {
@@ -1565,24 +1730,42 @@ private fun GroupPickerPanel(
                         }
                     }
                 }
-            } else if (query.isNotBlank()) {
-                Text(
-                    text = "没有匹配的分组，点击“使用”即可创建并应用。",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
             }
 
             if (currentGroup.isNotBlank()) {
+                val currentIsPrivateGroup = currentGroup in privateGroups
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.22f))
-                TextButton(
-                    onClick = onClearGroup,
+                Text(
+                    text = "私密分组下的所有日记会显示在私密空间。",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.68f)
+                )
+                Row(
                     modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(14.dp)
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    Icon(Icons.Filled.Close, contentDescription = null, modifier = Modifier.size(16.dp))
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text("清除当前分组")
+                    TextButton(
+                        onClick = { onToggleGroupPrivate(currentGroup) },
+                        modifier = Modifier.weight(1f),
+                        shape = RoundedCornerShape(14.dp)
+                    ) {
+                        Icon(
+                            if (currentIsPrivateGroup) Icons.Filled.LockOpen else Icons.Filled.Lock,
+                            contentDescription = null,
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(if (currentIsPrivateGroup) "取消分组私密" else "设为私密分组")
+                    }
+                    TextButton(
+                        onClick = onClearGroup,
+                        modifier = Modifier.weight(1f),
+                        shape = RoundedCornerShape(14.dp)
+                    ) {
+                        Icon(Icons.Filled.Close, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text("清除分组")
+                    }
                 }
             }
         }
@@ -1598,45 +1781,63 @@ private fun MetaPropertyCard(
     accentContainer: Color,
     accentContent: Color,
     preview: @Composable () -> Unit,
-    editor: @Composable () -> Unit
+    editor: @Composable () -> Unit,
+    embedded: Boolean = false
 ) {
     val isDark = isSystemInDarkTheme()
 
-    val shape = RoundedCornerShape(20.dp)
+    val shape = RoundedCornerShape(16.dp)
     Surface(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(shape)
-            .clickable(
-                onClick = onToggleExpanded,
-                interactionSource = remember { MutableInteractionSource() },
-                indication = rememberRipple()
-            ),
-        shape = shape,
-        color = if (isDark) {
-            MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.22f)
+            .animateContentSize(
+                animationSpec = spring(
+                    dampingRatio = 0.88f,
+                    stiffness = 380f
+                )
+            )
+            .clip(shape),
+        shape = RoundedCornerShape(if (embedded) 14.dp else 16.dp),
+        color = if (embedded) {
+            MaterialTheme.colorScheme.surface.copy(alpha = 0.0f)
         } else {
             MaterialTheme.colorScheme.surface
         },
-        tonalElevation = if (isDark) 0.dp else 1.dp,
-        border = BorderStroke(
-            1.dp,
-            MaterialTheme.colorScheme.outlineVariant.copy(alpha = if (expanded) 0.34f else 0.22f)
-        )
+        tonalElevation = if (embedded) 0.dp else 0.8.dp,
+        shadowElevation = if (embedded || isDark) 0.dp else 0.5.dp,
+        border = if (embedded) {
+            null
+        } else {
+            BorderStroke(
+                0.8.dp,
+                MaterialTheme.colorScheme.outlineVariant.copy(alpha = if (expanded) 0.28f else if (isDark) 0.14f else 0.20f)
+            )
+        }
     ) {
         Column(
-            modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
+            modifier = Modifier.padding(
+                horizontal = if (embedded) 4.dp else 14.dp,
+                vertical = if (embedded) 9.dp else 12.dp
+            ),
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
             Row(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(14.dp))
+                    .clickable(
+                        onClick = onToggleExpanded,
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = rememberRipple(bounded = true, radius = 200.dp)
+                    )
+                    .padding(horizontal = if (embedded) 4.dp else 0.dp, vertical = 3.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 Box(
                     modifier = Modifier
-                        .size(42.dp)
-                        .clip(RoundedCornerShape(14.dp))
+                        .size(if (embedded) 36.dp else 40.dp)
+                        .clip(RoundedCornerShape(12.dp))
                         .background(accentContainer),
                     contentAlignment = Alignment.Center
                 ) {
@@ -1644,22 +1845,22 @@ private fun MetaPropertyCard(
                         icon,
                         contentDescription = null,
                         modifier = Modifier.size(IconSize.Medium),
-                        tint = accentContent.copy(alpha = 0.76f)
+                        tint = accentContent.copy(alpha = 0.78f)
                     )
                 }
 
                 Text(
                     text = title,
                     modifier = Modifier.weight(1f),
-                    style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.SemiBold),
-                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.88f),
+                    style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Medium),
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.86f),
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
 
                 Text(
                     text = actionText,
-                    style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.SemiBold),
+                    style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Medium),
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1
                 )
@@ -1676,10 +1877,15 @@ private fun MetaPropertyCard(
             AnimatedVisibility(
                 visible = expanded,
                 enter = EnterTransitions.FadeInExpand,
-                exit = ExitTransitions.FadeOutShrink
+                exit = fadeOut(animationSpec = tween(220, easing = MotionEasing.Exit)) +
+                    scaleOut(targetScale = 0.992f, animationSpec = tween(220, easing = MotionEasing.Exit)) +
+                    shrinkVertically(
+                        shrinkTowards = Alignment.Top,
+                        animationSpec = tween(220, easing = MotionEasing.Exit)
+                    )
             ) {
-                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.22f))
+                Column(verticalArrangement = Arrangement.spacedBy(7.dp)) {
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.14f))
                     editor()
                 }
             }
@@ -1730,7 +1936,8 @@ private fun TagWorkspace(
                 )
             }
         },
-        editor = editor
+        editor = editor,
+        embedded = true
     )
 }
 
@@ -1759,7 +1966,8 @@ private fun GroupWorkspace(
                 overflow = TextOverflow.Ellipsis
             )
         },
-        editor = editor
+        editor = editor,
+        embedded = true
     )
 }
 
@@ -1917,11 +2125,11 @@ private fun TagEditor(
         .take(12)
 
     Column(
-        verticalArrangement = Arrangement.spacedBy(12.dp)
+        verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
             InlineCreateBar(
                 value = tagInput,
-                placeholder = "搜索或新建标签",
+                placeholder = "输入标签",
                 actionText = "添加",
                 actionIcon = Icons.Filled.Add,
                 enabled = query.isNotBlank(),
@@ -1934,11 +2142,10 @@ private fun TagEditor(
             )
 
             if (suggestions.isNotEmpty()) {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    TagSectionTitle(if (query.isBlank()) "推荐" else "匹配标签", suggestions.size)
+                Column(verticalArrangement = Arrangement.spacedBy(7.dp)) {
                     FlowRow(
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
                         suggestions.forEach { tag ->
                             EditorTagPill(
@@ -1949,12 +2156,6 @@ private fun TagEditor(
                         }
                     }
                 }
-            } else if (query.isNotBlank()) {
-                Text(
-                    text = "没有匹配标签，点击“添加”即可创建。",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.62f)
-                )
             }
         }
 }
@@ -1965,6 +2166,7 @@ fun ImagePreviewItem(
     onRemove: () -> Unit
 ) {
     val context = LocalContext.current
+    val messageHost = LocalAppMessageHostState.current
     
     Box(
         modifier = Modifier
@@ -2003,6 +2205,370 @@ fun ImagePreviewItem(
                     .padding(2.dp),
                 tint = MaterialTheme.colorScheme.onError
             )
+        }
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun EditorMetaCard(
+    mood: String,
+    tags: String,
+    group: String,
+    isPrivate: Boolean,
+    imageCount: Int,
+    showMoodPicker: Boolean,
+    showTagInput: Boolean,
+    showGroupPicker: Boolean,
+    showImagePicker: Boolean,
+    onToggleMood: () -> Unit,
+    onToggleTags: () -> Unit,
+    onToggleGroup: () -> Unit,
+    onTogglePrivate: () -> Unit,
+    onPrivateChange: (Boolean) -> Unit,
+    onToggleImages: () -> Unit,
+    onRemoveTag: (String) -> Unit,
+    moodContent: @Composable () -> Unit,
+    tagContent: @Composable () -> Unit,
+    groupContent: @Composable () -> Unit,
+    imageContent: @Composable () -> Unit
+) {
+    val isDark = isSystemInDarkTheme()
+    val selectedTags = tags.split(',').filter { it.isNotBlank() }
+
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 2.dp),
+        shape = RoundedCornerShape(18.dp),
+        color = MaterialTheme.colorScheme.surface,
+        tonalElevation = 0.8.dp,
+        shadowElevation = if (isDark) 0.dp else 0.6.dp,
+        border = BorderStroke(
+            width = 0.8.dp,
+            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = if (isDark) 0.14f else 0.20f)
+        )
+    ) {
+        Column(
+            modifier = Modifier.padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                MetaChipBlock(
+                    icon = Icons.Filled.Mood,
+                    title = "心情",
+                    value = moodLabel(mood),
+                    active = showMoodPicker,
+                    modifier = Modifier.weight(1f),
+                    onClick = onToggleMood
+                )
+                MetaChipBlock(
+                    icon = Icons.Filled.Label,
+                    title = "标签",
+                    value = if (selectedTags.isEmpty()) "添加" else "${selectedTags.size} 个",
+                    active = showTagInput,
+                    modifier = Modifier.weight(1f),
+                    onClick = onToggleTags
+                )
+            }
+
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                MetaChipBlock(
+                    icon = Icons.Filled.Folder,
+                    title = "分组",
+                    value = if (group.isBlank()) "选择" else group,
+                    active = showGroupPicker,
+                    modifier = Modifier.weight(1f),
+                    onClick = onToggleGroup
+                )
+                MetaChipBlock(
+                    icon = Icons.Filled.Lock,
+                    title = "私密",
+                    value = if (isPrivate) "已开启" else "关闭",
+                    active = isPrivate,
+                    modifier = Modifier.weight(1f),
+                    trailing = {
+                        Switch(
+                            checked = isPrivate,
+                            onCheckedChange = onPrivateChange,
+                            modifier = Modifier.graphicsLayer(scaleX = 0.72f, scaleY = 0.72f),
+                            colors = SwitchDefaults.colors(
+                                checkedThumbColor = MaterialTheme.colorScheme.primary,
+                                checkedTrackColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.52f),
+                                uncheckedThumbColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.48f),
+                                uncheckedTrackColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.72f)
+                            )
+                        )
+                    },
+                    onClick = onTogglePrivate
+                )
+            }
+
+            MetaChipBlock(
+                icon = Icons.Filled.Image,
+                title = "图片",
+                value = if (imageCount == 0) "添加" else "$imageCount 张",
+                active = showImagePicker,
+                modifier = Modifier.fillMaxWidth(),
+                onClick = onToggleImages
+            )
+
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                MetaAnimatedPanel(visible = showMoodPicker) {
+                    MetaPanelTitle("心情")
+                    moodContent()
+                }
+                MetaAnimatedPanel(visible = showTagInput) {
+                    MetaPanelTitle("标签")
+                    if (selectedTags.isNotEmpty()) {
+                        FlowRow(
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            verticalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            selectedTags.forEach { tag ->
+                                EditorTagPill(
+                                    text = tag,
+                                    selected = true,
+                                    removable = true,
+                                    compact = true,
+                                    onClick = { onRemoveTag(tag) }
+                                )
+                            }
+                        }
+                        HorizontalDivider(
+                            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.08f),
+                            thickness = 0.7.dp
+                        )
+                    }
+                    tagContent()
+                }
+                MetaAnimatedPanel(visible = showGroupPicker) {
+                    MetaPanelTitle("分组")
+                    groupContent()
+                }
+                MetaAnimatedPanel(visible = showImagePicker) {
+                    MetaPanelTitle("图片")
+                    imageContent()
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun MetaChipBlock(
+    icon: ImageVector,
+    title: String,
+    value: String,
+    active: Boolean = false,
+    modifier: Modifier = Modifier,
+    trailing: (@Composable () -> Unit)? = null,
+    onClick: () -> Unit
+) {
+    val containerColor = if (active) {
+        MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.12f)
+    } else {
+        MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.12f)
+    }
+    val borderColor = if (active) {
+        MaterialTheme.colorScheme.primary.copy(alpha = 0.14f)
+    } else {
+        MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.08f)
+    }
+    val iconColor = if (active) {
+        MaterialTheme.colorScheme.primary.copy(alpha = 0.68f)
+    } else {
+        MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.52f)
+    }
+
+    Surface(
+        modifier = modifier
+            .height(58.dp)
+            .clip(RoundedCornerShape(16.dp))
+            .clickable(onClick = onClick),
+        shape = RoundedCornerShape(16.dp),
+        color = containerColor,
+        tonalElevation = 0.dp,
+        shadowElevation = 0.dp,
+        border = BorderStroke(0.7.dp, borderColor)
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(horizontal = 11.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(
+                imageVector = icon,
+                contentDescription = null,
+                modifier = Modifier.size(17.dp),
+                tint = iconColor
+            )
+            Spacer(Modifier.width(8.dp))
+            Column(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.Center
+            ) {
+                Text(
+                    text = title,
+                    style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Medium),
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.86f),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Spacer(Modifier.height(2.dp))
+                Text(
+                    text = value,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.56f),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+            if (trailing != null) {
+                trailing()
+            } else {
+                Icon(
+                    imageVector = if (active) Icons.Filled.ExpandLess else Icons.Filled.ChevronRight,
+                    contentDescription = null,
+                    modifier = Modifier.size(16.dp),
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = if (active) 0.38f else 0.44f)
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun MetaPanelTitle(text: String) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(bottom = 1.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Box(
+            modifier = Modifier
+                .size(width = 10.dp, height = 3.dp)
+                .clip(RoundedCornerShape(50))
+                .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.32f))
+        )
+        Spacer(Modifier.width(6.dp))
+        Text(
+            text = text,
+            style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Medium),
+            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.58f),
+            maxLines = 1
+        )
+    }
+}
+
+@Composable
+private fun MetaAnimatedPanel(
+    visible: Boolean,
+    content: @Composable () -> Unit
+) {
+    AnimatedVisibility(
+        visible = visible,
+        enter = EnterTransitions.FadeInExpand,
+        exit = fadeOut(animationSpec = tween(200, easing = MotionEasing.Exit)) +
+            shrinkVertically(shrinkTowards = Alignment.Top, animationSpec = tween(200, easing = MotionEasing.Exit))
+    ) {
+        MetaExpandPanel(content = content)
+    }
+}
+
+@Composable
+private fun MetaExpandPanel(content: @Composable () -> Unit) {
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth(),
+        shape = RoundedCornerShape(12.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.08f),
+        border = BorderStroke(
+            width = 0.6.dp,
+            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.05f)
+        )
+    ) {
+        Column(
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 7.dp),
+            verticalArrangement = Arrangement.spacedBy(7.dp)
+        ) {
+            content()
+        }
+    }
+}
+
+@Composable
+private fun MetaDivider(stronger: Boolean = false) {
+    HorizontalDivider(
+        modifier = Modifier.padding(start = 52.dp, end = 18.dp),
+        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = if (stronger) 0.15f else 0.11f),
+        thickness = if (stronger) 0.9.dp else 0.7.dp
+    )
+}
+
+@Composable
+private fun MetaActionRow(
+    icon: ImageVector,
+    title: String,
+    value: String? = null,
+    expanded: Boolean = false,
+    trailing: (@Composable () -> Unit)? = null,
+    onClick: () -> Unit
+) {
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(min = 52.dp)
+            .clickable(onClick = onClick),
+        color = Color.Transparent
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 18.dp, vertical = 13.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(
+                icon,
+                contentDescription = null,
+                modifier = Modifier.size(20.dp),
+                tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.86f)
+            )
+            Spacer(Modifier.width(14.dp))
+            Text(
+                text = title,
+                style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Medium),
+                color = MaterialTheme.colorScheme.onSurface,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f)
+            )
+            if (trailing != null) {
+                trailing()
+            } else if (value != null) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.End,
+                    modifier = Modifier.widthIn(min = 86.dp)
+                ) {
+                    Text(
+                        text = value,
+                        style = MaterialTheme.typography.labelLarge,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        textAlign = TextAlign.End,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f, fill = false)
+                    )
+                    Spacer(Modifier.width(6.dp))
+                    Icon(
+                        imageVector = if (expanded) Icons.Filled.ExpandLess else Icons.Filled.ChevronRight,
+                        contentDescription = null,
+                        modifier = Modifier.size(18.dp),
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = if (expanded) 0.45f else 0.58f)
+                    )
+                }
+            }
         }
     }
 }

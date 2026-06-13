@@ -17,6 +17,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -31,6 +32,8 @@ import com.example.xbjsb.data.AiPreferences
 import com.example.xbjsb.data.ThemePreferences
 import com.example.xbjsb.data.backup.RestoreMode
 import com.example.xbjsb.ui.components.ApplyFrostedDialogWindow
+import com.example.xbjsb.ui.components.AppMessageType
+import com.example.xbjsb.ui.components.LocalAppMessageHostState
 import com.example.xbjsb.viewmodel.DiaryViewModel
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
@@ -40,16 +43,20 @@ import java.util.Locale
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsScreen(
-    onNavigateBack: () -> Unit
+onNavigateBack: () -> Unit,
+onNavigateToRecycleBin: () -> Unit = {}
 ) {
     val context = LocalContext.current
+    val messageHost = LocalAppMessageHostState.current
     val themePreferences = remember { ThemePreferences(context) }
     val aiPreferences = remember { AiPreferences(context) }
+    val securityPreferences = remember { com.example.xbjsb.data.security.SecurityPreferences(context) }
     val themeMode by themePreferences.themeModeFlow.collectAsState(initial = ThemePreferences.ThemeMode.SYSTEM)
     val themeColor by themePreferences.themeColorFlow.collectAsState(initial = com.example.xbjsb.ui.theme.ThemeColor.ORANGE)
     val aiConfig by aiPreferences.configFlow.collectAsState(initial = AiPreferences.AiConfig())
     val frostedBlurEnabled by themePreferences.frostedBlurEnabledFlow.collectAsState(initial = false)
     val animationSpeed by themePreferences.animationSpeedFlow.collectAsState(initial = ThemePreferences.AnimationSpeed.ELEGANT)
+    val securityConfig by securityPreferences.configFlow.collectAsState(initial = com.example.xbjsb.data.security.SecurityConfig())
     val scope = rememberCoroutineScope()
     val diaryViewModel: DiaryViewModel = viewModel()
     val backupUiState by diaryViewModel.backupUiState.collectAsState()
@@ -74,7 +81,7 @@ fun SettingsScreen(
     LaunchedEffect(backupUiState.message) {
         val message = backupUiState.message
         if (message != null) {
-            snackbarHostState.showSnackbar(message)
+            messageHost?.show(message, if (message.contains("成功") || message.contains("完成")) AppMessageType.Success else if (message.contains("失败")) AppMessageType.Error else AppMessageType.Info)
             diaryViewModel.clearBackupMessage()
         }
     }
@@ -84,6 +91,7 @@ fun SettingsScreen(
     var showThemeColorDialog by remember { mutableStateOf(false) }
     var showAiConfigDialog by remember { mutableStateOf(false) }
     var showAnimationSpeedDialog by remember { mutableStateOf(false) }
+    var showPasswordDialog by remember { mutableStateOf(false) }
     
     val themeModeText = when (themeMode) {
         ThemePreferences.ThemeMode.LIGHT -> "浅色"
@@ -232,6 +240,13 @@ fun SettingsScreen(
                 }
             )
 
+            SettingItem(
+                icon = Icons.Filled.Delete,
+                title = "回收站",
+                subtitle = "查看和恢复已删除的日记",
+                onClick = onNavigateToRecycleBin
+            )
+
             if (backupUiState.isProcessing) {
                 Row(
                     modifier = Modifier
@@ -248,6 +263,26 @@ fun SettingsScreen(
                     )
                 }
             }
+            
+            HorizontalDivider(
+                modifier = Modifier.padding(vertical = 8.dp),
+                color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f)
+            )
+            
+            // 安全
+            Text(
+                text = "安全",
+                style = MaterialTheme.typography.titleSmall,
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.padding(start = 4.dp, top = 8.dp, bottom = 4.dp)
+            )
+
+            SettingItem(
+                icon = Icons.Filled.Lock,
+                title = "隐私密码",
+                subtitle = if (securityConfig.isEnabled) "已启用" else "未设置",
+                onClick = { showPasswordDialog = true }
+            )
             
             HorizontalDivider(
                 modifier = Modifier.padding(vertical = 8.dp),
@@ -837,6 +872,27 @@ AiConfigDialog(
             }
         )
     }
+
+    // 密码设置对话框
+    if (showPasswordDialog) {
+        PasswordDialog(
+            isEnabled = securityConfig.isEnabled,
+            frostedBlurEnabled = frostedBlurEnabled,
+            onDismiss = { showPasswordDialog = false },
+            onSet = { password ->
+                scope.launch {
+                    securityPreferences.setPassword(password)
+                    showPasswordDialog = false
+                }
+            },
+            onDisable = {
+                scope.launch {
+                    securityPreferences.clearSecurity()
+                    showPasswordDialog = false
+                }
+            }
+        )
+    }
 }
 
 @Composable
@@ -1040,6 +1096,7 @@ private fun SettingSwitchItem(
                     color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = if (isDark) 0.72f else 0.78f)
                 )
             }
+            Spacer(Modifier.width(16.dp))
             Switch(
                 checked = checked,
                 onCheckedChange = onCheckedChange
@@ -1112,6 +1169,7 @@ private fun SettingItem(
                     color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = if (isDark) 0.72f else 0.78f)
                 )
             }
+            Spacer(Modifier.width(16.dp))
             Icon(
                 Icons.Filled.ChevronRight,
                 contentDescription = null,
@@ -1119,4 +1177,79 @@ private fun SettingItem(
             )
         }
     }
+}
+
+@Composable
+private fun PasswordDialog(
+    isEnabled: Boolean,
+    frostedBlurEnabled: Boolean,
+    onDismiss: () -> Unit,
+    onSet: (String) -> Unit,
+    onDisable: () -> Unit
+) {
+    var password by remember { mutableStateOf("") }
+    var confirmPassword by remember { mutableStateOf("") }
+    var currentPassword by remember { mutableStateOf("") }
+    var errorMessage by remember { mutableStateOf("") }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { 
+            ApplyFrostedDialogWindow(enabled = frostedBlurEnabled)
+            Text(if (isEnabled) "修改密码" else "设置密码")
+        },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                if (isEnabled) {
+                    OutlinedTextField(
+                        value = currentPassword,
+                        onValueChange = { currentPassword = it; errorMessage = "" },
+                        label = { Text("当前密码") },
+                        visualTransformation = PasswordVisualTransformation(),
+                        singleLine = true
+                    )
+                }
+                OutlinedTextField(
+                    value = password,
+                    onValueChange = { password = it; errorMessage = "" },
+                    label = { Text(if (isEnabled) "新密码" else "密码") },
+                    visualTransformation = PasswordVisualTransformation(),
+                    singleLine = true
+                )
+                OutlinedTextField(
+                    value = confirmPassword,
+                    onValueChange = { confirmPassword = it; errorMessage = "" },
+                    label = { Text("确认密码") },
+                    visualTransformation = PasswordVisualTransformation(),
+                    singleLine = true
+                )
+                if (errorMessage.isNotEmpty()) {
+                    Text(errorMessage, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = {
+                    when {
+                        password.length < 4 -> errorMessage = "密码至少4位"
+                        password != confirmPassword -> errorMessage = "两次密码不一致"
+                        else -> onSet(password)
+                    }
+                }
+            ) {
+                Text("确定")
+            }
+        },
+        dismissButton = {
+            if (isEnabled) {
+                TextButton(onClick = onDisable, colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)) {
+                    Text("关闭密码")
+                }
+            }
+            TextButton(onClick = onDismiss) {
+                Text("取消")
+            }
+        }
+    )
 }

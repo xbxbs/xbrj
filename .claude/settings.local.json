@@ -1,0 +1,7 @@
+{
+  "env": {
+    "ANTHROPIC_AUTH_TOKEN": "sk-LCKxfdVwToJIqFcOVVl9TSYjinL6nyy0MbPaIm4Q4EBGxpZs",
+    "ANTHROPIC_BASE_URL": "https://anyrouter.top",
+    "ANTHROPIC_BETA": "claude-code-20250219,context-1m-2025-08-07,interleaved-thinking-2025-05-14,redact-thinking-2026-02-12,context-management-2025-06-27,prompt-caching-scope-2026-01-05,advanced-tool-use-2025-11-20,effort-2025-11-24,fast-mode-2026-02-01"
+  }
+}

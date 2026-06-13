@@ -5,8 +5,8 @@ import androidx.compose.animation.core.*
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -19,8 +19,10 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
-import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.text.font.FontWeight
@@ -37,27 +39,39 @@ import com.example.xbjsb.ui.theme.*
 import com.example.xbjsb.viewmodel.DiaryViewModel
 import kotlin.math.roundToInt
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.window.Popup
+import androidx.compose.ui.window.PopupProperties
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 fun DiaryListScreen(
-    viewModel: DiaryViewModel = viewModel(),
-    onNavigateToEdit: (Long?) -> Unit,
-    onNavigateToDetail: (Long) -> Unit,
-    onNavigateToCalendar: () -> Unit,
-    onNavigateToStats: () -> Unit,
-    onNavigateToTags: () -> Unit = {},
-    onNavigateToSettings: () -> Unit = {}
+viewModel: DiaryViewModel = viewModel(),
+onNavigateToEdit: (Long?) -> Unit,
+onNavigateToDetail: (Long) -> Unit,
+onNavigateToCalendar: () -> Unit,
+onNavigateToStats: () -> Unit,
+onNavigateToTags: () -> Unit = {},
+onNavigateToGroups: () -> Unit = {},
+onNavigateToSettings: () -> Unit = {},
+onNavigateToRecycleBin: () -> Unit = {},
+onNavigateToPrivateSpace: () -> Unit = {}
 ) {
     val entries by viewModel.entries.collectAsState()
     val searchQuery by viewModel.searchQuery.collectAsState()
     val selectedMood by viewModel.selectedMood.collectAsState()
     val selectedGroup by viewModel.selectedGroup.collectAsState()
+    val selectedTags by viewModel.selectedTags.collectAsState()
+    val selectedDateMillis by viewModel.selectedDateMillis.collectAsState()
     val showFavoritesOnly by viewModel.showFavoritesOnly.collectAsState()
     
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     val themePreferences = remember { ThemePreferences(context) }
     val animationSpeed by themePreferences.animationSpeedFlow.collectAsState(initial = ThemePreferences.AnimationSpeed.ELEGANT)
     val entryCount by viewModel.entryCount.collectAsState()
@@ -66,22 +80,51 @@ fun DiaryListScreen(
     var showSearchBar by remember { mutableStateOf(false) }
     var showMoodFilter by remember { mutableStateOf(false) }
     var showGroupFilter by remember { mutableStateOf(false) }
+    var showTagFilter by remember { mutableStateOf(false) }
+    var showDateFilter by remember { mutableStateOf(false) }
     var showMoreMenu by remember { mutableStateOf(false) }
+    var moreMenuVisible by remember { mutableStateOf(false) }
+    var moreMenuClosing by remember { mutableStateOf(false) }
+    
+    LaunchedEffect(moreMenuClosing, moreMenuVisible) {
+        if (moreMenuClosing && !moreMenuVisible) {
+            delay(120)
+            showMoreMenu = false
+            moreMenuClosing = false
+        }
+    }
+    
+    fun closeMenuAndNavigate(action: () -> Unit) {
+        if (!showMoreMenu) return
+        moreMenuClosing = true
+        moreMenuVisible = false
+        scope.launch {
+            delay(150)
+            action()
+        }
+    }
+    
     val listState = rememberLazyListState()
-    val isFilterPanelVisible = showSearchBar || showMoodFilter || showGroupFilter
+    val isFilterPanelVisible = showSearchBar || showMoodFilter || showGroupFilter || showTagFilter
     var lastVisibleShowSearch by remember { mutableStateOf(false) }
     var lastVisibleShowMood by remember { mutableStateOf(false) }
     var lastVisibleShowGroup by remember { mutableStateOf(false) }
+    var lastVisibleShowTag by remember { mutableStateOf(false) }
+    var lastVisibleShowDate by remember { mutableStateOf(false) }
     if (isFilterPanelVisible) {
         SideEffect {
             lastVisibleShowSearch = showSearchBar
             lastVisibleShowMood = showMoodFilter
             lastVisibleShowGroup = showGroupFilter
+            lastVisibleShowTag = showTagFilter
+            lastVisibleShowDate = showDateFilter
         }
     }
     val panelContentShowSearch = if (isFilterPanelVisible) showSearchBar else lastVisibleShowSearch
     val panelContentShowMood = if (isFilterPanelVisible) showMoodFilter else lastVisibleShowMood
     val panelContentShowGroup = if (isFilterPanelVisible) showGroupFilter else lastVisibleShowGroup
+    val panelContentShowTag = if (isFilterPanelVisible) showTagFilter else lastVisibleShowTag
+    val panelContentShowDate = if (isFilterPanelVisible) showDateFilter else lastVisibleShowDate
     val filterPanelEnterStiffness: Float
     val filterPanelEnterDamping: Float
     val filterPanelExitDuration: Int
@@ -111,10 +154,10 @@ fun DiaryListScreen(
             listReflowStiffness = 400f
         }
     }
-    val listReflowSpec = remember(animationSpeed, filterPanelExitDuration) {
-        tween<IntOffset>(
-            durationMillis = filterPanelExitDuration,
-            easing = filterCollapseEasing
+    val listReflowSpec = remember(animationSpeed) {
+        spring<IntOffset>(
+            dampingRatio = listReflowDamping,
+            stiffness = listReflowStiffness
         )
     }
     
@@ -180,14 +223,22 @@ fun DiaryListScreen(
                             )
                         }
                     }
-                    IconButton(onClick = { showMoodFilter = !showMoodFilter }) {
-                        val moodTint by animateColorAsState(
-                            targetValue = if (showMoodFilter || selectedMood != null) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                    IconButton(onClick = {
+                        val shouldShowFilters = !(showMoodFilter || showTagFilter || showGroupFilter)
+                        showDateFilter = false
+                        showMoodFilter = shouldShowFilters
+                        showTagFilter = shouldShowFilters
+                        showGroupFilter = shouldShowFilters
+                    }) {
+                        val hasActiveFilters = selectedMood != null || selectedGroup != null || selectedTags.isNotEmpty() || selectedDateMillis != null
+                        val filtersExpanded = showDateFilter || showMoodFilter || showTagFilter || showGroupFilter
+                        val filterTint by animateColorAsState(
+                            targetValue = if (filtersExpanded || hasActiveFilters) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
                             animationSpec = tween(Motion.Fast, easing = MotionEasing.Smooth),
-                            label = "mood_filter_tint"
+                            label = "filter_tint"
                         )
                         AnimatedContent(
-                            targetState = showMoodFilter || selectedMood != null,
+                            targetState = filtersExpanded || hasActiveFilters,
                             transitionSpec = {
                                 (fadeIn(animationSpec = tween(Motion.Fast, easing = MotionEasing.Smooth)) +
                                     scaleIn(initialScale = 0.94f, animationSpec = tween(Motion.Fast, easing = MotionEasing.Smooth)))
@@ -196,12 +247,12 @@ fun DiaryListScreen(
                                             scaleOut(targetScale = 0.94f, animationSpec = tween(Motion.Micro, easing = MotionEasing.Exit))
                                     )
                             },
-                            label = "mood_filter_icon"
+                            label = "filter_icon"
                         ) { active ->
                             Icon(
                                 if (active) Icons.Filled.FilterAlt else Icons.Filled.FilterAltOff,
-                                contentDescription = "心情筛选",
-                                tint = moodTint
+                                contentDescription = if (filtersExpanded) "收起筛选" else "筛选",
+                                tint = filterTint
                             )
                         }
                     }
@@ -227,59 +278,114 @@ fun DiaryListScreen(
                     }
                     // 更多菜单（移到最右边）
                     Box {
-                        IconButton(onClick = { showMoreMenu = !showMoreMenu }) {
+                        IconButton(onClick = {
+                            if (showMoreMenu) {
+                                moreMenuClosing = true
+                                moreMenuVisible = false
+                            } else {
+                                moreMenuClosing = false
+                                moreMenuVisible = false
+                                showMoreMenu = true
+                            }
+                        }) {
                             Icon(
                                 Icons.Filled.MoreVert,
                                 contentDescription = "更多",
-                                tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                tint = if (showMoreMenu) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
-                        DropdownMenu(
-                            expanded = showMoreMenu,
-                            onDismissRequest = { showMoreMenu = false },
-                            offset = androidx.compose.ui.unit.DpOffset(x = (-8).dp, y = 0.dp)
-                        ) {
-                            DropdownMenuItem(
-                                text = { Text("日历") },
-                                leadingIcon = { Icon(Icons.Filled.CalendarMonth, null) },
-                                onClick = {
-                                    showMoreMenu = false
-                                    onNavigateToCalendar()
+                        if (showMoreMenu) {
+                            Popup(
+                                alignment = Alignment.TopEnd,
+                                onDismissRequest = {
+                                    moreMenuClosing = true
+                                    moreMenuVisible = false
+                                },
+                                properties = PopupProperties(focusable = true)
+                            ) {
+                                LaunchedEffect(Unit) {
+                                    delay(16)
+                                    moreMenuVisible = true
                                 }
-                            )
-                            DropdownMenuItem(
-                                text = { Text("统计") },
-                                leadingIcon = { Icon(Icons.Filled.Analytics, null) },
-                                onClick = {
-                                    showMoreMenu = false
-                                    onNavigateToStats()
+                                androidx.compose.animation.AnimatedVisibility(
+                                    visible = moreMenuVisible,
+                                    enter = fadeIn(animationSpec = tween(120)) + scaleIn(
+                                        initialScale = 0.96f,
+                                        animationSpec = tween(160, easing = FastOutSlowInEasing)
+                                    ),
+                                    exit = fadeOut(animationSpec = tween(90)) + scaleOut(
+                                        targetScale = 0.97f,
+                                        animationSpec = tween(120, easing = FastOutLinearInEasing)
+                                    )
+                                ) {
+                                    Surface(
+                                        modifier = Modifier.padding(top = 46.dp, end = 12.dp),
+                                        shape = RoundedCornerShape(20.dp),
+                                        color = MaterialTheme.colorScheme.surface,
+                                        tonalElevation = 6.dp,
+                                        shadowElevation = 12.dp,
+                                        border = BorderStroke(
+                                            0.6.dp,
+                                            MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.10f)
+                                        )
+                                    ) {
+                                    Column(
+                                        modifier = Modifier
+                                            .width(172.dp)
+                                            .padding(horizontal = 8.dp, vertical = 8.dp),
+                                        verticalArrangement = Arrangement.spacedBy(2.dp)
+                                    ) {
+                                        MoreMenuSection("查看")
+                                        MoreMenuAction(
+                                            icon = Icons.Filled.CalendarMonth,
+                                            text = "日历",
+                                            onClick = { closeMenuAndNavigate { onNavigateToCalendar() } }
+                                        )
+                                        MoreMenuAction(
+                                            icon = Icons.Filled.Analytics,
+                                            text = "统计",
+                                            onClick = { closeMenuAndNavigate { onNavigateToStats() } }
+                                        )
+                                        HorizontalDivider(
+                                            modifier = Modifier.padding(vertical = 2.dp),
+                                            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.12f)
+                                        )
+                                        MoreMenuSection("管理")
+                                        MoreMenuAction(
+                                            icon = Icons.Filled.Label,
+                                            text = "标签管理",
+                                            onClick = { closeMenuAndNavigate { onNavigateToTags() } }
+                                        )
+                                        MoreMenuAction(
+                                            icon = Icons.Filled.Folder,
+                                            text = "分组管理",
+                                            onClick = { closeMenuAndNavigate { onNavigateToGroups() } }
+                                        )
+                                        MoreMenuAction(
+                                            icon = Icons.Filled.Lock,
+                                            text = "私密空间",
+                                            onClick = { closeMenuAndNavigate { onNavigateToPrivateSpace() } }
+                                        )
+                                        MoreMenuAction(
+                                            icon = Icons.Filled.DeleteOutline,
+                                            text = "回收站",
+                                            onClick = { closeMenuAndNavigate { onNavigateToRecycleBin() } }
+                                        )
+                                        HorizontalDivider(
+                                            modifier = Modifier.padding(vertical = 2.dp),
+                                            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.12f)
+                                        )
+                                        MoreMenuSection("系统")
+                                        MoreMenuAction(
+                                            icon = Icons.Filled.Settings,
+                                            text = "设置",
+                                            onClick = { closeMenuAndNavigate { onNavigateToSettings() } }
+                                        )
+                                    }
                                 }
-                            )
-                            DropdownMenuItem(
-                                text = { Text("标签") },
-                                leadingIcon = { Icon(Icons.Filled.Label, null) },
-                                onClick = {
-                                    showMoreMenu = false
-                                    onNavigateToTags()
-                                }
-                            )
-                            DropdownMenuItem(
-                                text = { Text("分组筛选") },
-                                leadingIcon = { Icon(Icons.Filled.Folder, null) },
-                                onClick = {
-                                    showMoreMenu = false
-                                    showGroupFilter = !showGroupFilter
-                                }
-                            )
-                            DropdownMenuItem(
-                                text = { Text("设置") },
-                                leadingIcon = { Icon(Icons.Filled.Settings, null) },
-                                onClick = {
-                                    showMoreMenu = false
-                                    onNavigateToSettings()
-                                }
-                            )
+                            }
                         }
+                    }
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
@@ -344,7 +450,7 @@ fun DiaryListScreen(
                 }
             }
         },
-        containerColor = androidx.compose.ui.graphics.Color.Transparent
+        containerColor = MaterialTheme.colorScheme.background
     ) { paddingValues ->
         // 真正丝滑版：过滤区、已选筛选条和日记卡片全部放进同一个 LazyColumn。
         // 这样过滤区高度变化时，卡片作为列表 item 自然重排，不再由外层 Column 整体顶动 LazyColumn。
@@ -352,8 +458,9 @@ fun DiaryListScreen(
             state = listState,
             modifier = Modifier
                 .fillMaxSize()
+                .background(MaterialTheme.colorScheme.background)
                 .padding(paddingValues),
-            contentPadding = PaddingValues(vertical = Spacing.S)
+            contentPadding = PaddingValues(vertical = if (entries.isEmpty()) 0.dp else Spacing.S)
         ) {
             item(key = "filter_panel", contentType = "filter_panel") {
                 AnimatedVisibility(
@@ -375,14 +482,22 @@ fun DiaryListScreen(
                         showSearch = panelContentShowSearch,
                         showMood = panelContentShowMood,
                         showGroup = panelContentShowGroup,
+                        showTag = panelContentShowTag,
+                        showDate = false,
                         query = searchQuery,
                         selectedMood = selectedMood,
                         selectedGroup = selectedGroup,
+                        selectedTags = selectedTags,
+                        selectedDateMillis = selectedDateMillis,
                         usedGroups = viewModel.getUsedGroups(),
+                        usedTags = viewModel.getUsedTags(),
+                        usedDates = viewModel.getUsedDates(),
                         onQueryChange = { viewModel.setSearchQuery(it) },
                         onClearQuery = { viewModel.setSearchQuery("") },
                         onMoodSelected = { viewModel.setSelectedMood(it) },
                         onGroupSelected = { viewModel.setSelectedGroup(it) },
+                        onTagToggled = { viewModel.toggleSelectedTag(it) },
+                        onDateSelected = { viewModel.toggleSelectedDate(it) },
                         searchHistory = searchHistory,
                         onRemoveHistory = { viewModel.removeSearchHistory(it) },
                         animationSpeed = animationSpeed
@@ -395,7 +510,7 @@ fun DiaryListScreen(
                     modifier = Modifier.animateItemPlacement(
                         animationSpec = listReflowSpec
                     ),
-                    visible = (searchQuery.isNotBlank() || selectedMood != null || selectedGroup != null) && !showSearchBar && !showMoodFilter && !showGroupFilter,
+                    visible = (searchQuery.isNotBlank() || selectedMood != null || selectedGroup != null || selectedTags.isNotEmpty() || selectedDateMillis != null) && !showSearchBar && !showMoodFilter && !showGroupFilter && !showTagFilter && !showDateFilter,
                     enter = fadeIn(
                         animationSpec = spring(
                             dampingRatio = Spring.DampingRatioNoBouncy,
@@ -419,6 +534,8 @@ fun DiaryListScreen(
                         searchQuery = searchQuery,
                         selectedMood = selectedMood,
                         selectedGroup = selectedGroup,
+                        selectedTags = selectedTags,
+                        selectedDateMillis = selectedDateMillis,
                         showFavoritesOnly = false,
                         onClearFilters = { viewModel.clearFilters() }
                     )
@@ -435,7 +552,8 @@ fun DiaryListScreen(
                             )
                     ) {
                         EmptyState(
-                            hasFilters = searchQuery.isNotBlank() || selectedMood != null || showFavoritesOnly,
+                            hasFilters = searchQuery.isNotBlank() || selectedMood != null || selectedGroup != null || selectedTags.isNotEmpty() || selectedDateMillis != null || showFavoritesOnly,
+                            onClearFilters = { viewModel.clearFilters() },
                             onCreateFirst = { onNavigateToEdit(null) }
                         )
                     }
@@ -497,9 +615,11 @@ fun DiaryListScreen(
                 }
             }
 
-            // Bottom spacing for FAB
-            item(key = "fab_bottom_spacing", contentType = "spacing") {
-                Spacer(modifier = Modifier.height(ComponentSize.FABSize + Spacing.L))
+            // Bottom spacing for FAB：只有有日记卡片时才需要，避免空首页也能继续下滑
+            if (entries.isNotEmpty()) {
+                item(key = "fab_bottom_spacing", contentType = "spacing") {
+                    Spacer(modifier = Modifier.height(ComponentSize.FABSize + Spacing.L))
+                }
             }
         }
     }
@@ -518,15 +638,65 @@ private data class FilterPanelMotion(
 private data class FilterPanelState(
     val search: Boolean,
     val mood: Boolean,
-    val group: Boolean
+    val group: Boolean,
+    val tag: Boolean,
+    val date: Boolean
 ) {
-    val isVisible: Boolean get() = search || mood || group
+    val isVisible: Boolean get() = search || mood || group || tag || date
 
     fun include(other: FilterPanelState) = FilterPanelState(
         search = search || other.search,
         mood = mood || other.mood,
-        group = group || other.group
+        group = group || other.group,
+        tag = tag || other.tag,
+        date = date || other.date
     )
+}
+
+@Composable
+private fun MoreMenuSection(text: String) {
+    Text(
+        text = text,
+        modifier = Modifier.padding(start = 12.dp, top = 6.dp, bottom = 3.dp),
+        style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.SemiBold),
+        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.74f)
+    )
+}
+
+@Composable
+private fun MoreMenuAction(
+    icon: ImageVector,
+    text: String,
+    onClick: () -> Unit
+) {
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(42.dp)
+            .clip(RoundedCornerShape(14.dp))
+            .clickable(onClick = onClick),
+        shape = RoundedCornerShape(14.dp),
+        color = Color.Transparent
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(13.dp)
+        ) {
+            Icon(
+                imageVector = icon,
+                contentDescription = null,
+                modifier = Modifier.size(19.dp),
+                tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.86f)
+            )
+            Text(
+                text = text,
+                style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Medium),
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.92f),
+                maxLines = 1
+            )
+        }
+    }
 }
 
 @Composable
@@ -627,14 +797,22 @@ fun FilterPanel(
     showSearch: Boolean,
     showMood: Boolean,
     showGroup: Boolean,
+    showTag: Boolean,
+    showDate: Boolean,
     query: String,
     selectedMood: String?,
     selectedGroup: String?,
+    selectedTags: Set<String>,
+    selectedDateMillis: Long?,
     usedGroups: List<String>,
+    usedTags: List<String>,
+    usedDates: List<Long>,
     onQueryChange: (String) -> Unit,
     onClearQuery: () -> Unit,
     onMoodSelected: (String?) -> Unit,
     onGroupSelected: (String?) -> Unit,
+    onTagToggled: (String) -> Unit,
+    onDateSelected: (Long) -> Unit,
     searchHistory: List<String>,
     onRemoveHistory: (String) -> Unit,
     animationSpeed: ThemePreferences.AnimationSpeed
@@ -649,6 +827,7 @@ fun FilterPanel(
 
     val isDark = MaterialTheme.colorScheme.background.luminance() < 0.5f
     val fallbackMoodColor = MaterialTheme.colorScheme.surfaceVariant
+    val compactDateFormatter = remember { SimpleDateFormat("M月d日", Locale.getDefault()) }
 
     fun moodColor(moodKey: String) = when (moodKey) {
         "happy" -> if (isDark) MoodColors.happyDark else MoodColors.happy
@@ -695,11 +874,13 @@ fun FilterPanel(
         }
     }
 
-    val targetState = remember(showSearch, showMood, showGroup) {
+    val targetState = remember(showSearch, showMood, showGroup, showTag, showDate) {
         FilterPanelState(
             search = showSearch,
             mood = showMood,
-            group = showGroup
+            group = showGroup,
+            tag = showTag,
+            date = showDate
         )
     }
     var renderState by remember { mutableStateOf(targetState) }
@@ -796,26 +977,114 @@ fun FilterPanel(
                 }
             }
 
-                if (renderState.search && (renderState.mood || renderState.group)) {
+                if (renderState.search && (renderState.date || renderState.mood || renderState.tag || renderState.group)) {
                     FilterAnimatedGap(
-                        visible = targetState.search && (targetState.mood || targetState.group),
+                        visible = targetState.search && (targetState.date || targetState.mood || targetState.tag || targetState.group),
                         height = Spacing.M,
                         durationMillis = filterMotion.exitShrinkDuration,
                         easing = filterMotion.exitEasing
                     )
                 }
 
-                if (renderState.search && renderState.mood) {
+                if (renderState.search && (renderState.date || renderState.mood || renderState.tag || renderState.group)) {
                     FilterDivider(
-                        visible = targetState.search && targetState.mood,
+                        visible = targetState.search && (targetState.date || targetState.mood || targetState.tag || targetState.group),
                         fadeDuration = filterMotion.exitFadeDuration,
                         easing = filterMotion.exitEasing
                     )
                 }
 
-                if (renderState.search && renderState.mood) {
+                if (renderState.search && (renderState.date || renderState.mood || renderState.tag || renderState.group)) {
                     FilterAnimatedGap(
-                        visible = targetState.search && targetState.mood,
+                        visible = targetState.search && (targetState.date || targetState.mood || targetState.tag || targetState.group),
+                        height = Spacing.M,
+                        durationMillis = filterMotion.exitShrinkDuration,
+                        easing = filterMotion.exitEasing
+                    )
+                }
+
+                if (renderState.date) {
+                    FilterSectionSlot(
+                        visible = targetState.date,
+                        fadeDuration = filterMotion.exitFadeDuration,
+                        easing = filterMotion.exitEasing
+                    ) {
+                        Column(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalArrangement = Arrangement.spacedBy(Spacing.S)
+                        ) {
+                            Text(
+                                text = "只看某一天",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.72f),
+                                modifier = Modifier.padding(horizontal = Spacing.S)
+                            )
+                            FlowRow(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(Spacing.S),
+                                verticalArrangement = Arrangement.spacedBy(Spacing.S)
+                            ) {
+                                if (usedDates.isEmpty()) {
+                                    Text(
+                                        text = "还没有可选日期，写下日记后就能按天查看",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
+                                    )
+                                } else {
+                                    usedDates.take(10).forEach { dateMillis ->
+                                        val selected = selectedDateMillis == dateMillis
+                                        FilterChip(
+                                            selected = selected,
+                                            onClick = { onDateSelected(dateMillis) },
+                                            label = { Text(compactDateFormatter.format(Date(dateMillis))) },
+                                            shape = RoundedCornerShape(CornerRadius.Full),
+                                            leadingIcon = if (selected) {
+                                                { Icon(Icons.Filled.Check, contentDescription = null, modifier = Modifier.size(IconSize.Small)) }
+                                            } else {
+                                                { Icon(Icons.Filled.Event, contentDescription = null, modifier = Modifier.size(IconSize.Small)) }
+                                            },
+                                            colors = FilterChipDefaults.filterChipColors(
+                                                containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.34f),
+                                                selectedContainerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.72f),
+                                                labelColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                selectedLabelColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                                                iconColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.46f),
+                                                selectedLeadingIconColor = MaterialTheme.colorScheme.onPrimaryContainer
+                                            ),
+                                            border = FilterChipDefaults.filterChipBorder(
+                                                enabled = true,
+                                                selected = selected,
+                                                borderColor = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.22f),
+                                                selectedBorderColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.18f)
+                                            )
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                if (renderState.date && (renderState.mood || renderState.tag || renderState.group)) {
+                    FilterAnimatedGap(
+                        visible = targetState.date && (targetState.mood || targetState.tag || targetState.group),
+                        height = Spacing.M,
+                        durationMillis = filterMotion.exitShrinkDuration,
+                        easing = filterMotion.exitEasing
+                    )
+                }
+
+                if (renderState.date && (renderState.mood || renderState.tag || renderState.group)) {
+                    FilterDivider(
+                        visible = targetState.date && (targetState.mood || targetState.tag || targetState.group),
+                        fadeDuration = filterMotion.exitFadeDuration,
+                        easing = filterMotion.exitEasing
+                    )
+                }
+
+                if (renderState.date && (renderState.mood || renderState.tag || renderState.group)) {
+                    FilterAnimatedGap(
+                        visible = targetState.date && (targetState.mood || targetState.tag || targetState.group),
                         height = Spacing.M,
                         durationMillis = filterMotion.exitShrinkDuration,
                         easing = filterMotion.exitEasing
@@ -892,19 +1161,116 @@ fun FilterPanel(
                 }
             }
 
-                if (renderState.mood && renderState.group) {
+                if (renderState.mood && (renderState.tag || renderState.group)) {
                     FilterAnimatedGap(
-                        visible = targetState.mood && targetState.group,
+                        visible = targetState.mood && (targetState.tag || targetState.group),
                         height = Spacing.M,
                         durationMillis = filterMotion.exitShrinkDuration,
                         easing = filterMotion.exitEasing
                     )
                 }
 
-                if (renderState.mood && renderState.group) {
+                if (renderState.mood && (renderState.tag || renderState.group)) {
                     FilterDivider(
-                        visible = targetState.mood && targetState.group,
+                        visible = targetState.mood && (targetState.tag || targetState.group),
                         fadeDuration = filterMotion.exitFadeDuration,
+                        easing = filterMotion.exitEasing
+                    )
+                }
+
+                if (renderState.mood && (renderState.tag || renderState.group)) {
+                    FilterAnimatedGap(
+                        visible = targetState.mood && (targetState.tag || targetState.group),
+                        height = Spacing.S,
+                        durationMillis = filterMotion.exitShrinkDuration,
+                        easing = filterMotion.exitEasing
+                    )
+                }
+
+                if (renderState.tag) {
+                    FilterSectionSlot(
+                        visible = targetState.tag,
+                        fadeDuration = filterMotion.exitFadeDuration,
+                        easing = filterMotion.exitEasing
+                    ) {
+                        Column(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalArrangement = Arrangement.spacedBy(Spacing.S)
+                        ) {
+                            Text(
+                                text = "选择标签",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.72f),
+                                modifier = Modifier.padding(horizontal = Spacing.S)
+                            )
+                            FlowRow(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(Spacing.S),
+                                verticalArrangement = Arrangement.spacedBy(Spacing.S)
+                            ) {
+                                if (usedTags.isEmpty()) {
+                                    FilterEmptyHint(
+                                        icon = Icons.Filled.Label,
+                                        title = "还没有标签",
+                                        message = "写日记时添加标签后，就能在这里快速筛选。"
+                                    )
+                                } else {
+                                    usedTags.forEach { tag ->
+                                        val selected = tag in selectedTags
+                                        FilterChip(
+                                            selected = selected,
+                                            onClick = { onTagToggled(tag) },
+                                            label = { Text(tag) },
+                                            shape = RoundedCornerShape(CornerRadius.Full),
+                                            leadingIcon = if (selected) {
+                                                { Icon(Icons.Filled.Check, contentDescription = null, modifier = Modifier.size(IconSize.Small)) }
+                                            } else {
+                                                { Icon(Icons.Filled.Label, contentDescription = null, modifier = Modifier.size(IconSize.Small)) }
+                                            },
+                                            colors = FilterChipDefaults.filterChipColors(
+                                                containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.34f),
+                                                selectedContainerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.72f),
+                                                labelColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                selectedLabelColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                                                iconColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.46f),
+                                                selectedLeadingIconColor = MaterialTheme.colorScheme.onPrimaryContainer
+                                            ),
+                                            border = FilterChipDefaults.filterChipBorder(
+                                                enabled = true,
+                                                selected = selected,
+                                                borderColor = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.22f),
+                                                selectedBorderColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.18f)
+                                            )
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                if (renderState.tag && renderState.group) {
+                    FilterAnimatedGap(
+                        visible = targetState.tag && targetState.group,
+                        height = Spacing.M,
+                        durationMillis = filterMotion.exitShrinkDuration,
+                        easing = filterMotion.exitEasing
+                    )
+                }
+
+                if (renderState.tag && renderState.group) {
+                    FilterDivider(
+                        visible = targetState.tag && targetState.group,
+                        fadeDuration = filterMotion.exitFadeDuration,
+                        easing = filterMotion.exitEasing
+                    )
+                }
+
+                if (renderState.tag && renderState.group) {
+                    FilterAnimatedGap(
+                        visible = targetState.tag && targetState.group,
+                        height = Spacing.S,
+                        durationMillis = filterMotion.exitShrinkDuration,
                         easing = filterMotion.exitEasing
                     )
                 }
@@ -920,7 +1286,7 @@ fun FilterPanel(
                         verticalArrangement = Arrangement.spacedBy(Spacing.S)
                     ) {
                         Text(
-                            text = "按分组筛选",
+                            text = "选择分组",
                             style = MaterialTheme.typography.labelMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.72f),
                             modifier = Modifier.padding(horizontal = Spacing.S)
@@ -931,10 +1297,10 @@ fun FilterPanel(
                             verticalArrangement = Arrangement.spacedBy(Spacing.S)
                         ) {
                             if (usedGroups.isEmpty()) {
-                                Text(
-                                    text = "暂无分组，在编辑日记时添加分组",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
+                                FilterEmptyHint(
+                                    icon = Icons.Filled.Folder,
+                                    title = "还没有分组",
+                                    message = "给日记选择分组后，这里会显示可筛选的分组。"
                                 )
                             } else {
                                 usedGroups.forEach { group ->
@@ -971,22 +1337,77 @@ fun FilterPanel(
     }
 }
 
+@Composable
+private fun FilterEmptyHint(
+    icon: ImageVector,
+    title: String,
+    message: String,
+    modifier: Modifier = Modifier
+) {
+    Surface(
+        modifier = modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(16.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.20f),
+        tonalElevation = 0.dp,
+        border = BorderStroke(
+            1.dp,
+            MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.16f)
+        )
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(30.dp)
+                    .clip(RoundedCornerShape(11.dp))
+                    .background(MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.24f)),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    icon,
+                    contentDescription = null,
+                    modifier = Modifier.size(16.dp),
+                    tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.68f)
+                )
+            }
+            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text(
+                    text = title,
+                    style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold),
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.78f)
+                )
+                Text(
+                    text = message,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.62f)
+                )
+            }
+        }
+    }
+}
+
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun FilterChipRow(
     searchQuery: String,
     selectedMood: String?,
     selectedGroup: String?,
+    selectedTags: Set<String>,
+    selectedDateMillis: Long?,
     showFavoritesOnly: Boolean,
     onClearFilters: () -> Unit
 ) {
-    if (searchQuery.isBlank() && selectedMood == null && selectedGroup == null && !showFavoritesOnly) return
+    if (searchQuery.isBlank() && selectedMood == null && selectedGroup == null && selectedTags.isEmpty() && selectedDateMillis == null && !showFavoritesOnly) return
     
     val containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.24f)
     val labelColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.76f)
     val iconColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.68f)
     val trailingIconColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.52f)
     val borderColor = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.18f)
+    val compactDateFormatter = remember { SimpleDateFormat("M月d日", Locale.getDefault()) }
     
     Box(
         modifier = Modifier
@@ -1097,6 +1518,72 @@ fun FilterChipRow(
                     border = BorderStroke(1.dp, borderColor)
                 )
             }
+            if (selectedTags.isNotEmpty()) {
+                AssistChip(
+                    onClick = onClearFilters,
+                    label = {
+                        Text(
+                            selectedTags.joinToString("、"),
+                            style = MaterialTheme.typography.labelSmall
+                        )
+                    },
+                    leadingIcon = {
+                        Icon(
+                            Icons.Filled.Label,
+                            contentDescription = null,
+                            modifier = Modifier.size(14.dp)
+                        )
+                    },
+                    trailingIcon = {
+                        Icon(
+                            Icons.Filled.Close,
+                            contentDescription = "清除",
+                            modifier = Modifier.size(14.dp)
+                        )
+                    },
+                    shape = RoundedCornerShape(CornerRadius.Full),
+                    colors = AssistChipDefaults.assistChipColors(
+                        containerColor = containerColor,
+                        labelColor = labelColor,
+                        leadingIconContentColor = iconColor,
+                        trailingIconContentColor = trailingIconColor
+                    ),
+                    border = BorderStroke(1.dp, borderColor)
+                )
+            }
+            if (selectedDateMillis != null) {
+                AssistChip(
+                    onClick = onClearFilters,
+                    label = {
+                        Text(
+                            compactDateFormatter.format(Date(selectedDateMillis)),
+                            style = MaterialTheme.typography.labelSmall
+                        )
+                    },
+                    leadingIcon = {
+                        Icon(
+                            Icons.Filled.Event,
+                            contentDescription = null,
+                            modifier = Modifier.size(14.dp)
+                        )
+                    },
+                    trailingIcon = {
+                        Icon(
+                            Icons.Filled.Close,
+                            contentDescription = "清除",
+                            modifier = Modifier.size(14.dp)
+                        )
+                    },
+                    shape = RoundedCornerShape(CornerRadius.Full),
+                    colors = AssistChipDefaults.assistChipColors(
+                        containerColor = containerColor,
+                        labelColor = labelColor,
+                        leadingIconContentColor = iconColor,
+                        trailingIconContentColor = trailingIconColor
+                    ),
+                    border = BorderStroke(1.dp, borderColor)
+                )
+            }
             if (showFavoritesOnly) {
                 AssistChip(
                     onClick = onClearFilters,
@@ -1136,19 +1623,11 @@ fun FilterChipRow(
 @Composable
 fun EmptyState(
     hasFilters: Boolean,
+    onClearFilters: () -> Unit,
     onCreateFirst: () -> Unit
 ) {
     Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(
-                Brush.verticalGradient(
-                    colors = listOf(
-                        MaterialTheme.colorScheme.surface,
-                        MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.18f)
-                    )
-                )
-            ),
+        modifier = Modifier.fillMaxSize(),
         contentAlignment = Alignment.Center
     ) {
         Column(
@@ -1187,36 +1666,42 @@ fun EmptyState(
                 lineHeight = MaterialTheme.typography.bodyLarge.lineHeight * 1.5f
             )
             
-            // 创建按钮（仅在无筛选时显示）
-            if (!hasFilters) {
-                Spacer(modifier = Modifier.height(Spacing.L))
-                
-                Button(
-                    onClick = onCreateFirst,
-                    modifier = Modifier
-                        .padding(top = Spacing.M)
-                        .height(ComponentSize.ButtonHeightLarge),
-                    shape = RoundedCornerShape(CornerRadius.Large),
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = MaterialTheme.colorScheme.primaryContainer,
-                        contentColor = MaterialTheme.colorScheme.onPrimaryContainer
-                    ),
-                    elevation = ButtonDefaults.buttonElevation(
-                        defaultElevation = Elevation.Medium,
-                        pressedElevation = Elevation.Small
-                    )
-                ) {
-                    Icon(
-                        Icons.Filled.Add,
-                        contentDescription = null,
-                        modifier = Modifier.size(IconSize.Medium)
-                    )
-                    Spacer(modifier = Modifier.width(Spacing.S))
-                    Text(
-                        "写第一篇日记",
-                        style = MaterialTheme.typography.labelLarge
-                    )
-                }
+            // 操作按钮
+            Spacer(modifier = Modifier.height(Spacing.L))
+            
+            Button(
+                onClick = if (hasFilters) onClearFilters else onCreateFirst,
+                modifier = Modifier
+                    .padding(top = Spacing.M)
+                    .height(ComponentSize.ButtonHeightLarge),
+                shape = RoundedCornerShape(CornerRadius.Large),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = if (hasFilters) {
+                        MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.72f)
+                    } else {
+                        MaterialTheme.colorScheme.primaryContainer
+                    },
+                    contentColor = if (hasFilters) {
+                        MaterialTheme.colorScheme.onSurfaceVariant
+                    } else {
+                        MaterialTheme.colorScheme.onPrimaryContainer
+                    }
+                ),
+                elevation = ButtonDefaults.buttonElevation(
+                    defaultElevation = if (hasFilters) Elevation.Small else Elevation.Medium,
+                    pressedElevation = Elevation.Small
+                )
+            ) {
+                Icon(
+                    if (hasFilters) Icons.Filled.FilterAltOff else Icons.Filled.Add,
+                    contentDescription = null,
+                    modifier = Modifier.size(IconSize.Medium)
+                )
+                Spacer(modifier = Modifier.width(Spacing.S))
+                Text(
+                    if (hasFilters) "清除筛选" else "写第一篇日记",
+                    style = MaterialTheme.typography.labelLarge
+                )
             }
         }
     }

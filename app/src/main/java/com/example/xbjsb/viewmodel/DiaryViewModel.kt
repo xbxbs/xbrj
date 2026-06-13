@@ -10,6 +10,7 @@ import com.example.xbjsb.data.backup.RestoreMode
 import com.example.xbjsb.data.repository.DiaryRepository
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
+import java.util.Calendar
 
 class DiaryViewModel(application: Application) : AndroidViewModel(application) {
     
@@ -25,6 +26,12 @@ class DiaryViewModel(application: Application) : AndroidViewModel(application) {
     
     private val _selectedGroup = MutableStateFlow<String?>(null)
     val selectedGroup: StateFlow<String?> = _selectedGroup.asStateFlow()
+    
+    private val _selectedTags = MutableStateFlow<Set<String>>(emptySet())
+    val selectedTags: StateFlow<Set<String>> = _selectedTags.asStateFlow()
+    
+    private val _selectedDateMillis = MutableStateFlow<Long?>(null)
+    val selectedDateMillis: StateFlow<Long?> = _selectedDateMillis.asStateFlow()
     
     private val _showFavoritesOnly = MutableStateFlow(false)
     val showFavoritesOnly: StateFlow<Boolean> = _showFavoritesOnly.asStateFlow()
@@ -42,6 +49,15 @@ class DiaryViewModel(application: Application) : AndroidViewModel(application) {
     private val _draftTags = MutableStateFlow<List<String>>(emptyList())
     val draftTags: StateFlow<List<String>> = _draftTags.asStateFlow()
     
+    private val _draftGroup = MutableStateFlow("")
+    val draftGroup: StateFlow<String> = _draftGroup.asStateFlow()
+    
+    private val _draftImages = MutableStateFlow("")
+    val draftImages: StateFlow<String> = _draftImages.asStateFlow()
+    
+    private val _draftIsPrivate = MutableStateFlow(false)
+    val draftIsPrivate: StateFlow<Boolean> = _draftIsPrivate.asStateFlow()
+    
     private val _hasDraft = MutableStateFlow(false)
     val hasDraft: StateFlow<Boolean> = _hasDraft.asStateFlow()
     
@@ -58,13 +74,20 @@ class DiaryViewModel(application: Application) : AndroidViewModel(application) {
     
     
     // Combined flow for filtered entries
+    private val groupAndTagsFilter = combine(
+        selectedGroup,
+        selectedTags,
+        selectedDateMillis
+    ) { group, tags, dateMillis -> Triple(group, tags, dateMillis) }
+    
     val entries: StateFlow<List<DiaryEntry>> = combine(
         repository.allEntries,
         searchQuery,
         selectedMood,
-        selectedGroup,
+        groupAndTagsFilter,
         showFavoritesOnly
-    ) { allEntries, query, mood, group, favoritesOnly ->
+    ) { allEntries, query, mood, groupAndTags, favoritesOnly ->
+        val (group, tags, dateMillis) = groupAndTags
         var filtered = allEntries
         
         if (favoritesOnly) {
@@ -79,6 +102,23 @@ class DiaryViewModel(application: Application) : AndroidViewModel(application) {
             filtered = filtered.filter { it.group == group }
         }
         
+        if (tags.isNotEmpty()) {
+            filtered = filtered.filter { entry ->
+                val entryTags = entry.tags
+                    .split(",")
+                    .map { it.trim() }
+                    .filter { it.isNotBlank() }
+                    .toSet()
+                tags.all { it in entryTags }
+            }
+        }
+        
+        if (dateMillis != null) {
+            val start = startOfDayMillis(dateMillis)
+            val end = start + ONE_DAY_MILLIS
+            filtered = filtered.filter { it.timestamp in start until end }
+        }
+        
         if (query.isNotBlank()) {
             filtered = filtered.filter {
                 it.title.contains(query, ignoreCase = true) ||
@@ -90,13 +130,53 @@ class DiaryViewModel(application: Application) : AndroidViewModel(application) {
         filtered
     }.stateIn(
         viewModelScope,
-        SharingStarted.WhileSubscribed(5000),
+        SharingStarted.Eagerly,
         emptyList()
     )
     
     val allEntries: StateFlow<List<DiaryEntry>> = repository.allEntries.stateIn(
         viewModelScope,
         SharingStarted.Eagerly,
+        emptyList()
+    )
+    
+    val deletedEntries: StateFlow<List<DiaryEntry>> = repository.deletedEntries.stateIn(
+        viewModelScope,
+        SharingStarted.WhileSubscribed(5000),
+        emptyList()
+    )
+    
+    val privateEntries: StateFlow<List<DiaryEntry>> = repository.privateEntries.stateIn(
+        viewModelScope,
+        SharingStarted.WhileSubscribed(5000),
+        emptyList()
+    )
+    
+    val privateGroups: StateFlow<Set<String>> = repository.privateGroups.stateIn(
+        viewModelScope,
+        SharingStarted.WhileSubscribed(5000),
+        emptySet()
+    )
+    
+    val groupSummaries: StateFlow<List<GroupSummary>> = combine(
+        repository.activeEntries,
+        repository.privateGroups
+    ) { entries, privateGroups ->
+        entries
+            .mapNotNull { it.group.trim().takeIf { group -> group.isNotBlank() } }
+            .groupingBy { it }
+            .eachCount()
+            .map { (name, count) ->
+                GroupSummary(
+                    name = name,
+                    count = count,
+                    isPrivate = name in privateGroups
+                )
+            }
+            .sortedWith(compareByDescending<GroupSummary> { it.isPrivate }.thenBy { it.name })
+    }.stateIn(
+        viewModelScope,
+        SharingStarted.WhileSubscribed(5000),
         emptyList()
     )
     
@@ -118,6 +198,32 @@ class DiaryViewModel(application: Application) : AndroidViewModel(application) {
         _selectedGroup.value = group
     }
     
+    fun toggleSelectedTag(tag: String) {
+        if (tag.isBlank()) return
+        _selectedTags.value = if (_selectedTags.value.contains(tag)) {
+            _selectedTags.value - tag
+        } else {
+            _selectedTags.value + tag
+        }
+    }
+    
+    fun setSelectedTags(tags: Set<String>) {
+        _selectedTags.value = tags.filter { it.isNotBlank() }.toSet()
+    }
+    
+    fun clearSelectedTags() {
+        _selectedTags.value = emptySet()
+    }
+    
+    fun setSelectedDate(dateMillis: Long?) {
+        _selectedDateMillis.value = dateMillis?.let { startOfDayMillis(it) }
+    }
+    
+    fun toggleSelectedDate(dateMillis: Long) {
+        val normalized = startOfDayMillis(dateMillis)
+        _selectedDateMillis.value = if (_selectedDateMillis.value == normalized) null else normalized
+    }
+    
     fun toggleFavoritesOnly() {
         _showFavoritesOnly.value = !_showFavoritesOnly.value
     }
@@ -126,6 +232,8 @@ class DiaryViewModel(application: Application) : AndroidViewModel(application) {
         _searchQuery.value = ""
         _selectedMood.value = null
         _selectedGroup.value = null
+        _selectedTags.value = emptySet()
+        _selectedDateMillis.value = null
         _showFavoritesOnly.value = false
     }
     
@@ -147,23 +255,70 @@ class DiaryViewModel(application: Application) : AndroidViewModel(application) {
             .sorted()
     }
     
+    // 从所有日记中提取已使用的标签，不受当前筛选条件影响
+    fun getUsedTags(): List<String> {
+        return allEntries.value
+            .flatMap { entry ->
+                entry.tags
+                    .split(",")
+                    .map { it.trim() }
+                    .filter { it.isNotBlank() }
+            }
+            .distinct()
+            .sorted()
+    }
+    
+    // 从所有日记中提取已记录日期，不受当前筛选条件影响，按新到旧排序
+    fun getUsedDates(): List<Long> {
+        return allEntries.value
+            .map { startOfDayMillis(it.timestamp) }
+            .distinct()
+            .sortedDescending()
+    }
+    
+    private fun startOfDayMillis(timestamp: Long): Long {
+        return Calendar.getInstance().apply {
+            timeInMillis = timestamp
+            set(Calendar.HOUR_OF_DAY, 0)
+            set(Calendar.MINUTE, 0)
+            set(Calendar.SECOND, 0)
+            set(Calendar.MILLISECOND, 0)
+        }.timeInMillis
+    }
+    
+    private companion object {
+        const val ONE_DAY_MILLIS = 24L * 60L * 60L * 1000L
+    }
+    
     suspend fun getEntryById(id: Long): DiaryEntry? {
         return repository.getEntryById(id)
     }
     
-    fun insertEntry(entry: DiaryEntry) {
-        viewModelScope.launch {
-            repository.insert(entry)
-        }
+    suspend fun insertEntry(entry: DiaryEntry) {
+        repository.insert(entry)
     }
     
-    fun updateEntry(entry: DiaryEntry) {
-        viewModelScope.launch {
-            repository.update(entry)
-        }
+    suspend fun updateEntry(entry: DiaryEntry) {
+        repository.update(entry)
     }
     
     suspend fun deleteEntry(entry: DiaryEntry) {
+        repository.delete(entry)
+    }
+    
+    fun softDeleteEntry(entry: DiaryEntry) {
+        viewModelScope.launch {
+            repository.softDelete(entry)
+        }
+    }
+    
+    fun restoreEntry(entry: DiaryEntry) {
+        viewModelScope.launch {
+            repository.restore(entry)
+        }
+    }
+    
+    suspend fun permanentlyDeleteEntry(entry: DiaryEntry) {
         repository.delete(entry)
     }
     
@@ -173,13 +328,46 @@ class DiaryViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
     
+    fun setEntryPrivate(entry: DiaryEntry, isPrivate: Boolean) {
+        viewModelScope.launch {
+            repository.update(entry.copy(isPrivate = isPrivate))
+        }
+    }
+    
+    fun togglePrivate(entry: DiaryEntry) {
+        setEntryPrivate(entry, !entry.isPrivate)
+    }
+    
+    fun setGroupPrivate(groupName: String, isPrivate: Boolean) {
+        viewModelScope.launch {
+            repository.setGroupPrivate(groupName, isPrivate)
+        }
+    }
+    
+    fun toggleGroupPrivate(groupName: String) {
+        viewModelScope.launch {
+            repository.toggleGroupPrivate(groupName)
+        }
+    }
+    
     // 草稿管理
-    fun saveDraft(title: String, content: String, mood: String?, tags: List<String>) {
+    fun saveDraft(
+        title: String,
+        content: String,
+        mood: String?,
+        tags: List<String>,
+        group: String = "",
+        images: String = "",
+        isPrivate: Boolean = false
+    ) {
         _draftTitle.value = title
         _draftContent.value = content
         _draftMood.value = mood
         _draftTags.value = tags
-        _hasDraft.value = title.isNotBlank() || content.isNotBlank()
+        _draftGroup.value = group
+        _draftImages.value = images
+        _draftIsPrivate.value = isPrivate
+        _hasDraft.value = title.isNotBlank() || content.isNotBlank() || tags.isNotEmpty() || group.isNotBlank() || images.isNotBlank()
     }
     
     fun clearDraft() {
@@ -187,6 +375,9 @@ class DiaryViewModel(application: Application) : AndroidViewModel(application) {
         _draftContent.value = ""
         _draftMood.value = null
         _draftTags.value = emptyList()
+        _draftGroup.value = ""
+        _draftImages.value = ""
+        _draftIsPrivate.value = false
         _hasDraft.value = false
     }
     
@@ -195,7 +386,10 @@ class DiaryViewModel(application: Application) : AndroidViewModel(application) {
             title = _draftTitle.value,
             content = _draftContent.value,
             mood = _draftMood.value,
-            tags = _draftTags.value
+            tags = _draftTags.value,
+            group = _draftGroup.value,
+            images = _draftImages.value,
+            isPrivate = _draftIsPrivate.value
         )
     }
     
@@ -301,11 +495,20 @@ class DiaryViewModel(application: Application) : AndroidViewModel(application) {
     }
 }
 
+data class GroupSummary(
+    val name: String,
+    val count: Int,
+    val isPrivate: Boolean
+)
+
 data class DraftData(
     val title: String,
     val content: String,
     val mood: String?,
-    val tags: List<String>
+    val tags: List<String>,
+    val group: String = "",
+    val images: String = "",
+    val isPrivate: Boolean = false
 )
 
 data class BackupUiState(

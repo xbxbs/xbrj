@@ -3,6 +3,7 @@ package com.example.xbjsb.data.repository
 import android.content.Context
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
+import androidx.datastore.preferences.core.stringSetPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.example.xbjsb.data.DiaryEntry
 import com.google.gson.Gson
@@ -17,15 +18,58 @@ class DiaryRepository(private val context: Context) {
     
     private val gson = Gson()
     private val ENTRIES_KEY = stringPreferencesKey("diary_entries")
+    private val PRIVATE_GROUPS_KEY = stringSetPreferencesKey("private_groups")
+    
+    val privateGroups: Flow<Set<String>> = context.dataStore.data.map { preferences ->
+        preferences[PRIVATE_GROUPS_KEY].orEmpty()
+    }
     
     val allEntries: Flow<List<DiaryEntry>> = context.dataStore.data.map { preferences ->
+        val json = preferences[ENTRIES_KEY] ?: "[]"
+        val privateGroups = preferences[PRIVATE_GROUPS_KEY].orEmpty()
+        val type = object : TypeToken<List<DiaryEntry>>() {}.type
+        try {
+            val entries: List<DiaryEntry> = gson.fromJson(json, type)
+            entries
+                .filter { !it.isDeleted && !it.isPrivate && it.group !in privateGroups }
+                .sortedByDescending { it.timestamp }
+        } catch (e: Exception) {
+            emptyList()
+        }
+    }
+    
+    val activeEntries: Flow<List<DiaryEntry>> = context.dataStore.data.map { preferences ->
         val json = preferences[ENTRIES_KEY] ?: "[]"
         val type = object : TypeToken<List<DiaryEntry>>() {}.type
         try {
             val entries: List<DiaryEntry> = gson.fromJson(json, type)
-            entries.sortedByDescending { it.timestamp }
+            entries.filter { !it.isDeleted }.sortedByDescending { it.timestamp }
         } catch (e: Exception) {
-            // 数据格式不兼容，返回空列表（数据迁移）
+            emptyList()
+        }
+    }
+    
+    val deletedEntries: Flow<List<DiaryEntry>> = context.dataStore.data.map { preferences ->
+        val json = preferences[ENTRIES_KEY] ?: "[]"
+        val type = object : TypeToken<List<DiaryEntry>>() {}.type
+        try {
+            val entries: List<DiaryEntry> = gson.fromJson(json, type)
+            entries.filter { it.isDeleted }.sortedByDescending { it.deletedAt ?: 0L }
+        } catch (e: Exception) {
+            emptyList()
+        }
+    }
+    
+    val privateEntries: Flow<List<DiaryEntry>> = context.dataStore.data.map { preferences ->
+        val json = preferences[ENTRIES_KEY] ?: "[]"
+        val privateGroups = preferences[PRIVATE_GROUPS_KEY].orEmpty()
+        val type = object : TypeToken<List<DiaryEntry>>() {}.type
+        try {
+            val entries: List<DiaryEntry> = gson.fromJson(json, type)
+            entries
+                .filter { !it.isDeleted && (it.isPrivate || it.group in privateGroups) }
+                .sortedByDescending { it.timestamp }
+        } catch (e: Exception) {
             emptyList()
         }
     }
@@ -57,6 +101,30 @@ class DiaryRepository(private val context: Context) {
         val currentEntries = getAllEntriesSnapshot()
         currentEntries.forEach { deleteImagesForEntry(it) }
         saveAll(entries)
+    }
+    
+    suspend fun setGroupPrivate(groupName: String, isPrivate: Boolean) {
+        val normalized = groupName.trim()
+        if (normalized.isBlank()) return
+        context.dataStore.edit { preferences ->
+            val current = preferences[PRIVATE_GROUPS_KEY].orEmpty().toMutableSet()
+            if (isPrivate) {
+                current.add(normalized)
+            } else {
+                current.remove(normalized)
+            }
+            preferences[PRIVATE_GROUPS_KEY] = current
+        }
+    }
+    
+    suspend fun toggleGroupPrivate(groupName: String) {
+        val normalized = groupName.trim()
+        if (normalized.isBlank()) return
+        context.dataStore.edit { preferences ->
+            val current = preferences[PRIVATE_GROUPS_KEY].orEmpty().toMutableSet()
+            if (normalized in current) current.remove(normalized) else current.add(normalized)
+            preferences[PRIVATE_GROUPS_KEY] = current
+        }
     }
     
     suspend fun getEntryById(id: Long): DiaryEntry? {
@@ -127,6 +195,20 @@ class DiaryRepository(private val context: Context) {
         deleteImagesForEntry(entry)
         // 再删除数据库记录
         deleteById(entry.id)
+    }
+    
+    suspend fun softDelete(entry: DiaryEntry) {
+        update(entry.copy(
+            isDeleted = true,
+            deletedAt = System.currentTimeMillis()
+        ))
+    }
+    
+    suspend fun restore(entry: DiaryEntry) {
+        update(entry.copy(
+            isDeleted = false,
+            deletedAt = null
+        ))
     }
     
     suspend fun deleteById(id: Long) {

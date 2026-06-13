@@ -23,6 +23,7 @@ import com.example.xbjsb.ui.theme.*
 import com.example.xbjsb.ui.components.ApplyFrostedDialogWindow
 import com.example.xbjsb.data.ThemePreferences
 import com.example.xbjsb.viewmodel.DiaryViewModel
+import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
@@ -35,6 +36,7 @@ fun TagManagerScreen(
     val context = androidx.compose.ui.platform.LocalContext.current
     val themePreferences = remember { ThemePreferences(context) }
     val frostedBlurEnabled by themePreferences.frostedBlurEnabledFlow.collectAsState(initial = false)
+    val scope = rememberCoroutineScope()
     
     // 统计所有标签及其使用次数
     val tagStats = remember(entries) {
@@ -145,14 +147,16 @@ fun TagManagerScreen(
                 TextButton(
                     onClick = {
                         showDeleteDialog?.let { tag ->
-                            // 从所有日记中移除该标签
-                            entries.forEach { entry ->
-                                val tagList = entry.getTagList()
-                                if (tag in tagList) {
-                                    val updatedEntry = entry.copy(
-                                        tags = tagList.filter { it != tag }.joinToString(",")
-                                    )
-                                    viewModel.updateEntry(updatedEntry)
+                            scope.launch {
+                                // 从所有日记中移除该标签
+                                entries.forEach { entry ->
+                                    val tagList = entry.getTagList()
+                                    if (tag in tagList) {
+                                        val updatedEntry = entry.copy(
+                                            tags = tagList.filter { it != tag }.joinToString(",")
+                                        )
+                                        viewModel.updateEntry(updatedEntry)
+                                    }
                                 }
                             }
                         }

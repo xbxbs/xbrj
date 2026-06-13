@@ -7,7 +7,6 @@ import androidx.compose.animation.core.FiniteAnimationSpec
 import androidx.compose.animation.core.TweenSpec
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
-import androidx.compose.animation.core.FastOutLinearInEasing
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -37,6 +36,14 @@ object Motion {
     const val PressedScale = 0.985f
     const val ChipPressedScale = 0.975f
     const val FavoriteScale = 1.08f
+
+    // 方向形变：幅度必须克制，避免廉价果冻感
+    const val PageEnterScale = 1.012f
+    const val PageBackgroundScale = 0.988f
+    const val VerticalEnterScaleY = 0.92f
+    const val VerticalExitScaleY = 0.96f
+    const val ListExitScaleY = 0.92f
+    const val ListExitScaleX = 1.01f
 }
 
 object MotionEasing {
@@ -79,17 +86,20 @@ object MotionSpec {
 }
 
 object PageTransitions {
-    private const val BackgroundShiftFraction = 0.10f  // 背景联动位移 10%
+    private const val BackgroundShiftFraction = 0.18f  // 背景联动位移 18%，保证视差明显
     
     // 从右进入新页面（首页 → 详情/编辑）
-    // 法则：横向运动 + 过冲回弹
+    // 法则：横向运动 + 轻微透明度变化，避免明显过冲
     val Enter: EnterTransition = slideInHorizontally(
         initialOffsetX = { it },
         animationSpec = spring(
-            dampingRatio = 0.68f,  // 降低阻尼，制造过冲
-            stiffness = 380f
+            dampingRatio = 0.92f,
+            stiffness = 360f
         )
     ) + fadeIn(
+        animationSpec = tween(340, easing = MotionEasing.Smooth)
+    ) + scaleIn(
+        initialScale = Motion.PageEnterScale,
         animationSpec = tween(340, easing = MotionEasing.Smooth)
     )
 
@@ -98,46 +108,40 @@ object PageTransitions {
     val Exit: ExitTransition = slideOutHorizontally(
         targetOffsetX = { (-it * BackgroundShiftFraction).toInt() },  // 负数=左移
         animationSpec = spring(
-            dampingRatio = 0.85f,  // 背景更平滑
+            dampingRatio = 0.85f,
             stiffness = 450f
         )
     ) + fadeOut(
-        targetAlpha = 0.6f,
-        animationSpec = tween(420, easing = MotionEasing.Filter)
+        targetAlpha = 0.72f,
+        animationSpec = tween(380, easing = MotionEasing.Filter)
     ) + scaleOut(
-        targetScale = 0.95f,  // 轻微缩小，增强层次
-        animationSpec = spring(
-            dampingRatio = 0.80f,
-            stiffness = 400f
-        )
+        targetScale = Motion.PageBackgroundScale,
+        animationSpec = tween(380, easing = MotionEasing.Smooth)
     )
 
     // 返回时从背景恢复（首页从左回正 + 淡入）
-    // 视差联动：详情页右退，背景从左恢复原位 + 过冲回弹
+    // 视差联动：详情页右退，背景从左平稳恢复原位
     val PopEnter: EnterTransition = slideInHorizontally(
         initialOffsetX = { (-it * BackgroundShiftFraction).toInt() },  // 从左侧恢复
         animationSpec = spring(
-            dampingRatio = 0.68f,  // 降低阻尼，制造过冲
-            stiffness = 380f
+            dampingRatio = 0.94f,
+            stiffness = 360f
         )
     ) + fadeIn(
-        initialAlpha = 0.6f,
-        animationSpec = tween(340, easing = MotionEasing.Smooth)
+        initialAlpha = 0.72f,
+        animationSpec = tween(360, easing = MotionEasing.Smooth)
     ) + scaleIn(
-        initialScale = 0.95f,
-        animationSpec = spring(
-            dampingRatio = 0.68f,  // 缩放也过冲
-            stiffness = 380f
-        )
+        initialScale = Motion.PageBackgroundScale,
+        animationSpec = tween(360, easing = MotionEasing.Smooth)
     )
 
     // 详情/编辑页向右退出
-    // 法则：横向运动 + 过冲回弹
+    // 法则：横向位移 + 淡出，避免返回末尾回弹
     val PopExit: ExitTransition = slideOutHorizontally(
         targetOffsetX = { it },
         animationSpec = spring(
-            dampingRatio = 0.68f,  // 降低阻尼，制造过冲
-            stiffness = 380f
+            dampingRatio = 0.94f,
+            stiffness = 360f
         )
     ) + fadeOut(
         animationSpec = tween(340, easing = MotionEasing.Smooth)
@@ -164,6 +168,12 @@ object EnterTransitions {
             dampingRatio = 0.75f,
             stiffness = 380f
         )
+    ) + androidx.compose.animation.scaleIn(
+        initialScale = 0.98f,
+        animationSpec = spring(
+            dampingRatio = 0.82f,
+            stiffness = 300f
+        )
     ) + androidx.compose.animation.expandVertically(
         expandFrom = Alignment.Top,
         animationSpec = spring(
@@ -189,10 +199,13 @@ object ExitTransitions {
     )
 
     val FadeOutShrink = androidx.compose.animation.fadeOut(
-        animationSpec = tween(200, easing = FastOutLinearInEasing)
+        animationSpec = tween(220, easing = MotionEasing.Exit)
+    ) + androidx.compose.animation.scaleOut(
+        targetScale = 0.992f,
+        animationSpec = tween(220, easing = MotionEasing.Exit)
     ) + androidx.compose.animation.shrinkVertically(
         shrinkTowards = Alignment.Top,
-        animationSpec = tween(200, easing = FastOutLinearInEasing)
+        animationSpec = tween(220, easing = MotionEasing.Exit)
     )
 }
 

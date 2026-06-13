@@ -112,6 +112,7 @@ enum class DiaryAiAction(
     val displayName: String,
     val shortName: String
 ) {
+    QUICK_GENERATE("快速生成", "生成"),
     EXPAND("AI 扩写", "扩写"),
     SHORTEN("AI 缩写", "缩写"),
     POLISH("AI 润色", "润色"),
@@ -261,6 +262,11 @@ class OpenAiCompatibleDiaryService(
     ): String {
         val tagsText = generationContext.currentTags.takeIf { it.isNotEmpty() }?.joinToString("、") ?: "无"
         val actionInstruction = when (action) {
+            DiaryAiAction.QUICK_GENERATE -> """
+                快速生成完整日记：根据用户提供的关键词或简单描述，智能扩展成一篇完整的日记。
+                即使用户输入很简单（如"下雨天 忧郁"），也要理解意图并生成有画面感、有细节的完整日记（250-350字左右）。
+                输出 content 必须是完整的日记正文，title 必须是合适的标题。
+            """.trimIndent()
             DiaryAiAction.EXPAND -> """
                 扩写当前日记正文：保留原意和事实，不新增关键事件；补充自然细节、场景过渡和真实感受，让内容更完整、更有日记感。
                 输出 content 必须是扩写后的完整正文。
@@ -343,7 +349,7 @@ class OpenAiCompatibleDiaryService(
 
     companion object {
         private val DIARY_SYSTEM_PROMPT = """
-            你是“拾光札记”的专业中文日记写作助手，擅长根据用户的问答内容、已有正文、心情、标签、分组和写作模板，生成真实、自然、有个人感的中文日记。
+            你是"拾光札记"的专业中文日记写作助手，擅长根据用户的问答内容、已有正文、心情、标签、分组和写作模板，生成真实、自然、有个人感的中文日记。
 
             你的任务不是写作文，不是写鸡汤，也不是写营销文案，而是帮助用户把零散回答整理成一篇像用户本人写出来的日记。
 
@@ -355,7 +361,7 @@ class OpenAiCompatibleDiaryService(
             - 如果用户回答很少，可以写得简洁，但不能为了丰富而虚构。
 
             2. 第一人称表达
-            - 正文必须使用第一人称“我”。
+            - 正文必须使用第一人称"我"。
             - 语气应像私人日记，而不是报告、公众号文章、作文或心理咨询记录。
 
             3. 自然克制
@@ -373,7 +379,14 @@ class OpenAiCompatibleDiaryService(
             - 如果已有正文为空，则根据问答生成完整日记。
             - 不要改变用户原本表达的核心意思。
 
-            6. 输出格式
+            6. 智能扩展与意图理解
+            - 如果用户输入很简单（比如只有关键词或短语，如"下雨天 忧郁"、"加班到很晚"），你要主动理解意图并扩展成完整场景。
+            - 示例：用户输入"下雨天 忧郁" → 理解为"写一篇关于下雨天的日记，氛围忧郁，包含雨声、灰色天空、独自一人的感觉"，生成 250-350 字左右的完整日记。
+            - 示例：用户输入"加班到很晚 累" → 理解为"写一篇关于加班的日记，氛围疲惫，包含办公室深夜、工作压力、想回家的心情"，生成完整日记。
+            - 扩展时要符合用户给出的心情、标签、分组的暗示，不要偏离主题。
+            - 即使用户输入很简单，也要生成有画面感、有细节的日记，而不是只回复"请提供更多信息"。
+
+            7. 输出格式
             - 你必须只输出严格 JSON。
             - 不要输出 Markdown。
             - 不要输出解释。

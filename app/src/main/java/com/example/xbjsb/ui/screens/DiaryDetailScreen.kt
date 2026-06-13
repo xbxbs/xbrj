@@ -17,6 +17,7 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -48,6 +49,8 @@ import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.ErrorOutline
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FavoriteBorder
+import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.LockOpen
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -92,9 +95,12 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import com.example.xbjsb.data.DiaryEntry
 import com.example.xbjsb.data.ThemePreferences
+import com.example.xbjsb.data.security.SecurityPreferences
 import com.example.xbjsb.ui.components.ApplyFrostedDialogWindow
 import com.example.xbjsb.ui.components.MoodChip
 import com.example.xbjsb.ui.components.TagChip
+import com.example.xbjsb.ui.components.AppMessageType
+import com.example.xbjsb.ui.components.LocalAppMessageHostState
 import com.example.xbjsb.ui.components.frostedTopAppBarColors
 import com.example.xbjsb.ui.theme.CornerRadius
 import com.example.xbjsb.ui.theme.Motion
@@ -117,7 +123,10 @@ fun DiaryDetailScreen(
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
     val themePreferences = remember { ThemePreferences(context) }
+    val securityPreferences = remember { SecurityPreferences(context) }
     val frostedBlurEnabled by themePreferences.frostedBlurEnabledFlow.collectAsState(initial = false)
+    val securityConfig by securityPreferences.configFlow.collectAsState(initial = com.example.xbjsb.data.security.SecurityConfig())
+    val messageHost = LocalAppMessageHostState.current
 
     LaunchedEffect(entryId) {
         entry = viewModel.getEntryById(entryId)
@@ -148,6 +157,29 @@ fun DiaryDetailScreen(
                                 imageVector = if (current.isFavorite) Icons.Filled.Favorite else Icons.Filled.FavoriteBorder,
                                 contentDescription = if (current.isFavorite) "取消收藏" else "收藏",
                                 tint = if (current.isFavorite) androidx.compose.ui.graphics.Color(0xFFFF6B6B) else MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        IconButton(
+                            onClick = {
+                                if (!current.isPrivate && !securityConfig.isEnabled) {
+                                    scope.launch { messageHost?.show("请先设置隐私密码", AppMessageType.Warning) }
+                                } else {
+                                    val updated = current.copy(isPrivate = !current.isPrivate)
+                                    entry = updated
+                                    scope.launch {
+                                        viewModel.updateEntry(updated)
+                                        messageHost?.show(
+                                            if (updated.isPrivate) "已设为私密" else "已取消私密",
+                                            if (updated.isPrivate) AppMessageType.Private else AppMessageType.Success
+                                        )
+                                    }
+                                }
+                            }
+                        ) {
+                            Icon(
+                                imageVector = if (current.isPrivate) Icons.Filled.Lock else Icons.Filled.LockOpen,
+                                contentDescription = if (current.isPrivate) "取消私密" else "设为私密",
+                                tint = if (current.isPrivate) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
                         IconButton(onClick = { onNavigateToEdit(entryId) }) {
@@ -183,28 +215,28 @@ fun DiaryDetailScreen(
     }
 
     if (showDeleteDialog) {
-        AlertDialog(
+AlertDialog(
             onDismissRequest = { showDeleteDialog = false },
-            icon = { Icon(Icons.Filled.DeleteForever, contentDescription = null, tint = MaterialTheme.colorScheme.error) },
+            icon = { Icon(Icons.Filled.Delete, contentDescription = null, tint = MaterialTheme.colorScheme.primary) },
             title = {
                 ApplyFrostedDialogWindow(enabled = frostedBlurEnabled)
-                Text("删除日记？")
+                Text("移至回收站？")
             },
-            text = { Text("删除后无法恢复。") },
-confirmButton = {
+            text = { Text("删除后可在回收站中恢复，30 天后自动清除。") },
+            confirmButton = {
                     TextButton(
                         onClick = {
-                            val target = entry
-                            showDeleteDialog = false
-                            if (target != null) {
-                                // 直接删除，返回首页时卡片已消失
-                                scope.launch {
-                                    viewModel.deleteEntry(target)
+val target = entry
+                                showDeleteDialog = false
+                                if (target != null) {
+                                    // 软删除，进入回收站
+                                    scope.launch {
+                                        viewModel.softDeleteEntry(target)
+                                        onNavigateBack()
+                                    }
+                                } else {
                                     onNavigateBack()
                                 }
-                            } else {
-                                onNavigateBack()
-                            }
                         },
                     colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)
                 ) { Text("删除") }
@@ -226,38 +258,46 @@ private fun DiaryReader(
     val context = LocalContext.current
     val themePreferences = remember { ThemePreferences(context) }
     val frostedBlurEnabled by themePreferences.frostedBlurEnabledFlow.collectAsState(initial = false)
+    val imageList = entry.getImageList()
+    val tagList = entry.getTagList()
+    val cardShape = RoundedCornerShape(20.dp)
+    val subtleBorder = BorderStroke(
+        1.dp,
+        MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.24f)
+    )
     
     Column(
         modifier = modifier
             .fillMaxSize()
             .verticalScroll(rememberScrollState())
-            .padding(horizontal = 20.dp, vertical = 20.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp)
+            .padding(horizontal = 16.dp, vertical = 18.dp),
+        verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
+        // 阅读页头部：标题优先，日期 / 心情 / 标签作为辅助信息
         Card(
             modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(16.dp),
+            shape = cardShape,
             colors = CardDefaults.cardColors(
-                containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)
+                containerColor = MaterialTheme.colorScheme.surface
             ),
-            elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
+            elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
+            border = subtleBorder
         ) {
             Column(
-                modifier = Modifier.padding(24.dp),
-                verticalArrangement = Arrangement.spacedBy(16.dp)
+                modifier = Modifier.padding(horizontal = 22.dp, vertical = 20.dp),
+                verticalArrangement = Arrangement.spacedBy(14.dp)
             ) {
-                // 标题
                 Text(
                     text = entry.title.ifBlank { "未命名日记" },
                     style = MaterialTheme.typography.headlineMedium.copy(
                         fontWeight = FontWeight.Bold,
-                        letterSpacing = (-0.5).sp,
-                        fontSize = 28.sp
+                        letterSpacing = (-0.6).sp,
+                        fontSize = 29.sp,
+                        lineHeight = 36.sp
                     ),
                     color = MaterialTheme.colorScheme.onSurface
                 )
 
-                // 日期和心情标签
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically,
@@ -265,55 +305,101 @@ private fun DiaryReader(
                 ) {
                     Text(
                         text = entry.getFormattedDate(),
-                        style = MaterialTheme.typography.bodyMedium.copy(
-                            fontSize = 14.sp
-                        ),
-                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
+                        style = MaterialTheme.typography.bodyMedium.copy(fontSize = 14.sp),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.72f)
                     )
-                    
-                    // 心情标签（右侧）
+
                     MoodChip(mood = entry.mood)
                 }
 
-                // 内容
-                Text(
-                    text = entry.content.ifBlank { "没有内容" },
-                    style = MaterialTheme.typography.bodyLarge.copy(
-                        lineHeight = 28.sp
-                    ),
-                    color = MaterialTheme.colorScheme.onSurface
-                )
-
-                if (entry.tags.isNotBlank()) {
+                if (tagList.isNotEmpty()) {
                     HorizontalDivider(
-                        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.15f),
+                        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.18f),
                         thickness = 0.5.dp
                     )
                     FlowRow(
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
-                        entry.getTagList().forEach { TagChip(tag = it) }
+                        tagList.forEach { TagChip(tag = it) }
                     }
                 }
-                
-                // 图片显示
-                val imageList = entry.getImageList()
-                if (imageList.isNotEmpty()) {
-                    HorizontalDivider(
-                        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.15f),
-                        thickness = 0.5.dp
+            }
+        }
+
+        // 正文阅读区：独立成卡，避免标题、标签、图片互相抢层级
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            shape = cardShape,
+            colors = CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.surface
+            ),
+            elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
+            border = subtleBorder
+        ) {
+            Column(
+                modifier = Modifier.padding(horizontal = 22.dp, vertical = 22.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Text(
+                    text = "正文",
+                    style = MaterialTheme.typography.labelMedium.copy(
+                        fontWeight = FontWeight.Medium,
+                        letterSpacing = 0.1.sp
+                    ),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.54f)
+                )
+
+                SelectionContainer {
+                    Text(
+                        text = entry.content.ifBlank { "没有内容" },
+                        style = MaterialTheme.typography.bodyLarge.copy(
+                            fontSize = 17.sp,
+                            lineHeight = 30.sp
+                        ),
+                        color = if (entry.content.isBlank()) {
+                            MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.58f)
+                        } else {
+                            MaterialTheme.colorScheme.onSurface
+                        }
                     )
+                }
+            }
+        }
+
+        if (imageList.isNotEmpty()) {
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                shape = cardShape,
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.surface
+                ),
+                elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
+                border = subtleBorder
+            ) {
+                Column(
+                    modifier = Modifier.padding(horizontal = 18.dp, vertical = 18.dp),
+                    verticalArrangement = Arrangement.spacedBy(14.dp)
+                ) {
+                    Text(
+                        text = "图片",
+                        style = MaterialTheme.typography.labelMedium.copy(
+                            fontWeight = FontWeight.Medium,
+                            letterSpacing = 0.1.sp
+                        ),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.54f)
+                    )
+
                     FlowRow(
-                        horizontalArrangement = Arrangement.spacedBy(12.dp),
-                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
                         imageList.forEachIndexed { index, imagePath ->
                             Box(
                                 modifier = Modifier
-                                    .size(120.dp)
-                                    .clip(RoundedCornerShape(12.dp))
-                                    .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f))
+                                    .size(112.dp)
+                                    .clip(RoundedCornerShape(14.dp))
+                                    .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.22f))
                                     .clickable { selectedImageIndex = index }
                             ) {
                                 AsyncImage(
@@ -335,12 +421,11 @@ private fun DiaryReader(
         Spacer(modifier = Modifier.height(Spacing.XXL))
     }
     
-    val previewImages = entry.getImageList()
     selectedImageIndex?.let { index ->
-        if (previewImages.isNotEmpty()) {
+        if (imageList.isNotEmpty()) {
             ImageLightbox(
-                images = previewImages,
-                currentIndex = index.coerceIn(0, previewImages.lastIndex),
+                images = imageList,
+                currentIndex = index.coerceIn(0, imageList.lastIndex),
                 onIndexChange = { selectedImageIndex = it },
                 onDismiss = { selectedImageIndex = null },
                 frostedBlurEnabled = frostedBlurEnabled

@@ -7,13 +7,17 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.animation.*
 import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -28,11 +32,23 @@ import com.example.xbjsb.ui.screens.DiaryListScreen
 import com.example.xbjsb.ui.screens.CalendarScreen
 import com.example.xbjsb.ui.screens.MoodStatsScreen
 import com.example.xbjsb.ui.screens.TagManagerScreen
+import com.example.xbjsb.ui.screens.GroupManagerScreen
 import com.example.xbjsb.ui.screens.SettingsScreen
+import com.example.xbjsb.ui.screens.RecycleBinScreen
+import com.example.xbjsb.ui.screens.PrivateSpaceScreen
+import com.example.xbjsb.ui.screens.UnlockScreen
+import com.example.xbjsb.ui.components.AppMessageHost
+import com.example.xbjsb.ui.components.AppMessageType
+import com.example.xbjsb.ui.components.LocalAppMessageHostState
+import com.example.xbjsb.ui.components.rememberAppMessageHostState
+import com.example.xbjsb.data.security.PrivateAccessManager
+import com.example.xbjsb.data.security.SecurityPreferences
 import com.example.xbjsb.ui.theme.DiaryTheme
 import java.time.LocalDate
 import com.example.xbjsb.ui.theme.PageTransitions
 import com.example.xbjsb.viewmodel.DiaryViewModel
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -93,10 +109,23 @@ class MainActivity : ComponentActivity() {
 fun DiaryApp() {
     val navController = rememberNavController()
     val viewModel: DiaryViewModel = viewModel()
+    val messageHostState = rememberAppMessageHostState()
+    val scope = rememberCoroutineScope()
+    val context = LocalContext.current
+    val securityPreferences = SecurityPreferences(context)
     
-    NavHost(
-        navController = navController,
-        startDestination = "diary_list",
+    CompositionLocalProvider(LocalAppMessageHostState provides messageHostState) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(MaterialTheme.colorScheme.background)
+        ) {
+            NavHost(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(MaterialTheme.colorScheme.background),
+                navController = navController,
+                startDestination = "diary_list",
         enterTransition = { PageTransitions.Enter },
         exitTransition = { PageTransitions.Exit },
         popEnterTransition = { PageTransitions.PopEnter },
@@ -125,8 +154,37 @@ fun DiaryApp() {
                 onNavigateToTags = {
                     navController.navigate("tag_manager")
                 },
+                onNavigateToGroups = {
+                    scope.launch {
+                        val config = securityPreferences.configFlow.first()
+                        if (!config.isEnabled) {
+                            messageHostState.show("请先设置隐私密码", AppMessageType.Warning)
+                            navController.navigate("settings")
+                        } else if (PrivateAccessManager.isUnlocked()) {
+                            navController.navigate("group_manager")
+                        } else {
+                            navController.navigate("private_unlock?target=group_manager")
+                        }
+                    }
+                },
                 onNavigateToSettings = {
                     navController.navigate("settings")
+                },
+                onNavigateToRecycleBin = {
+                    navController.navigate("recycle_bin")
+                },
+                onNavigateToPrivateSpace = {
+                    scope.launch {
+                        val config = securityPreferences.configFlow.first()
+                        if (!config.isEnabled) {
+                            messageHostState.show("请先设置隐私密码", AppMessageType.Warning)
+                            navController.navigate("settings")
+                        } else if (PrivateAccessManager.isUnlocked()) {
+                            navController.navigate("private_space")
+                        } else {
+                            navController.navigate("private_unlock?target=private_space")
+                        }
+                    }
                 }
             )
         }
@@ -136,7 +194,41 @@ fun DiaryApp() {
             SettingsScreen(
                 onNavigateBack = {
                     navController.popBackStack()
+                },
+                onNavigateToRecycleBin = {
+                    navController.navigate("recycle_bin")
                 }
+            )
+        }
+        
+        // Private Unlock Screen
+        composable(
+            route = "private_unlock?target={target}",
+            arguments = listOf(navArgument("target") { 
+                type = NavType.StringType
+                defaultValue = "private_space"
+            })
+        ) { backStackEntry ->
+            val target = backStackEntry.arguments?.getString("target") ?: "private_space"
+            UnlockScreen(
+                title = "私密空间",
+                subtitle = "请输入隐私密码",
+                onUnlocked = {
+                    PrivateAccessManager.unlock()
+                    navController.navigate(target) {
+                        popUpTo("private_unlock?target={target}") { inclusive = true }
+                    }
+                }
+            )
+        }
+        
+        // Private Space Screen
+        composable("private_space") {
+            PrivateSpaceScreen(
+                viewModel = viewModel,
+                onNavigateBack = { navController.popBackStack() },
+                onNavigateToDetail = { entryId -> navController.navigate("diary_detail/$entryId") },
+                onNavigateToGroups = { navController.navigate("group_manager") }
             )
         }
         
@@ -147,10 +239,8 @@ fun DiaryApp() {
                 onNavigateBack = {
                     navController.popBackStack()
                 },
-                onDateClick = { date ->
-                    // 点击日期后筛选当天日记并返回列表页
-                    // TODO: 传递日期参数给列表页进行筛选
-                    navController.popBackStack()
+                onNavigateToDetail = { entryId ->
+                    navController.navigate("diary_detail/$entryId")
                 }
             )
         }
@@ -178,6 +268,31 @@ fun DiaryApp() {
                 }
             )
         }
+        
+        // Group Manager Screen
+        composable("group_manager") {
+            GroupManagerScreen(
+                viewModel = viewModel,
+                onNavigateBack = { navController.popBackStack() }
+            )
+        }
+        
+        // Recycle Bin Screen
+composable("recycle_bin") {
+    RecycleBinScreen(
+        onNavigateBack = {
+            navController.popBackStack()
+        },
+        onNavigateHome = {
+            val popped = navController.popBackStack("diary_list", inclusive = false)
+            if (!popped) {
+                navController.navigate("diary_list") {
+                    launchSingleTop = true
+                }
+            }
+        }
+    )
+}
         
         // Edit Screen
         composable(
@@ -219,6 +334,9 @@ fun DiaryApp() {
                     navController.navigate("diary_edit/$editEntryId")
                 }
             )
+        }
+            }
+            AppMessageHost(hostState = messageHostState)
         }
     }
 }
